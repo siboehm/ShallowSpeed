@@ -40,6 +40,13 @@ def rprint(*args, **kwargs):
         print(*args, **kwargs)
 
 
+def assert_sync(model_hash):
+    # check that all processes have the same model hash
+    model_hash_all = comm.gather(model_hash, root=0)
+    if MPI.COMM_WORLD.rank == 0 and len(set(model_hash_all)) > 1:
+        raise ValueError("Model hash mismatch")
+
+
 if __name__ == "__main__":
     # init MPI
     comm = MPI.COMM_WORLD
@@ -71,7 +78,9 @@ if __name__ == "__main__":
 
     # define the model
     model = MLP(input_size=28 * 28, hidden_size=64, output_size=10)
-    print("Model hash:", get_model_hash(model))
+    # make sure the initialization is the same on all processes
+    assert_sync(get_model_hash(model))
+
     # define the loss function
     criterion = nn.CrossEntropyLoss()
     # define the optimizer
@@ -79,7 +88,7 @@ if __name__ == "__main__":
 
     # train the model
     start_time = time.time()
-    num_epochs = 10
+    num_epochs = 5
     for epoch in range(num_epochs):
         epoch_start_time = time.time()
         for i, (images, labels) in enumerate(train_loader):
@@ -125,8 +134,8 @@ if __name__ == "__main__":
             )
         )
 
-    # hash the model to ensure deterministic behavior
-    print("Model hash:", get_model_hash(model))
+    # make sure the final model is the same on all processes
+    assert_sync(get_model_hash(model))
 
     if rank == 0:
         torch.save(model.state_dict(), f"data/models/model_p{size}.pkl")
