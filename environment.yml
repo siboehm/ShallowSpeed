@@ -1,0 +1,12 @@
+name: distributed_NNs
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - mpi4py
+  - numpy
+  - pytorch
+  - ca-certificates
+  - openssl
+  - torchvision
+prefix: /Users/siboehm/mambaforge/envs/distributed_NNs
