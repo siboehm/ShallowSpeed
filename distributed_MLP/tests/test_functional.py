@@ -63,6 +63,7 @@ def test_linear_grad():
     b = np.array([[1, -1, 1, 3]], dtype=float)
     grad_out = np.arange(4, dtype=float).reshape((1, 4))
 
+    # TODO get rid of some duplication by introducing a function
     # calculating Jacobian for input using finite differences method
     jacobian_i_fd = np.zeros((3, 4), dtype=float)
     for i in range(3):
@@ -120,6 +121,7 @@ def test_softmax():
 
 
 def test_softmax_grad():
+    # TODO test against batch size > 1
     x = np.array([[-1, -2, -3]], dtype=float)
     grad_out = np.array([[1, 9, 11]], dtype=float)
 
@@ -141,6 +143,7 @@ def test_softmax_grad():
 
 
 def test_mse():
+    # TODO write a grad test for MSE
     input = np.array([[1, 2, 3], [4, 5, 6]])
     target = np.array([[1, 2, 3], [4, 5, 6]])
     mse = mse_loss(input, target)
