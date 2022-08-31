@@ -1,6 +1,13 @@
 import numpy as np
 from minMLP.base import Parameter, Module
-from minMLP.functional import relu, relu_grad, linear, linear_grad, softmax_grad, softmax
+from minMLP.functional import (
+    relu,
+    relu_grad,
+    linear,
+    linear_grad,
+    softmax_grad,
+    softmax,
+)
 
 
 class ReLU(Module):

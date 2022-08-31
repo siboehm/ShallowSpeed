@@ -41,5 +41,4 @@ def mse_loss(input, target):
 
 
 def mse_loss_grad(input, target):
-    return - 2 * (target - input) / input.size
-
+    return -2 * (target - input) / input.size

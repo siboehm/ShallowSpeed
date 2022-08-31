@@ -2,6 +2,7 @@ from minMLP.layers import MLP
 from minMLP.functional import mse_loss_grad
 import numpy as np
 
+
 def test_MLP_basic():
     dnn = MLP(sizes=[132, 11, 9])
     assert len(dnn.parameters()) == 4
