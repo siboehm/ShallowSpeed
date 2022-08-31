@@ -4,9 +4,10 @@ channels:
 dependencies:
   - python=3.10
   - mpi4py
+  - pandas
+  - scikit-learn
+  - matplotlib
   - numpy
   - pytorch
-  - ca-certificates
-  - openssl
+  - jupyter
   - torchvision
-prefix: /Users/siboehm/mambaforge/envs/distributed_NNs
