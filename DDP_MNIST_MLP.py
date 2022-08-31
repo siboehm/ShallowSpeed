@@ -7,25 +7,29 @@ from torchvision import datasets, transforms
 from mpi4py import MPI
 from hashlib import sha1
 
+# Make sure that all kernel's used by PyTorch run in a single thread
+# Eg the matrix multiplication kernel by default will use multiple threads (this is called intra-op parallelism)
 torch.set_num_threads(1)
 torch.manual_seed(0)
 
-# Define the MLP classifier
+# Define an MLP classifier
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size: int, hidden_sizes: list[int], output_size: int):
         super(MLP, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, output_size)
+        self.fc1 = nn.Linear(input_size, hidden_sizes[0])
+        self.fc2 = nn.Linear(hidden_sizes[0], hidden_sizes[1])
+        self.fc3 = nn.Linear(hidden_sizes[1], output_size)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
 
 
 def get_model_hash(model):
     # this is probably not the most efficient way to do this, but it's
-    # not straightforward to get a deterministic, content-based hash of a model
+    # not straightforward to get a deterministic, content-based hash of a model's parameters
     hash_str = ""
     for param in model.parameters():
         numpy_param = param.data.cpu().numpy()
@@ -47,27 +51,30 @@ def assert_sync(model_hash):
         raise ValueError("Model hash mismatch")
 
 
+NUM_EPOCHS = 5
+BATCH_SIZE = 128
+
 if __name__ == "__main__":
     # init MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
-    print("rank:", rank)
 
     # download the MNIST dataset
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
     )
     dataset = datasets.MNIST("data/", train=True, download=True, transform=transform)
-    # get a distinct subset of the dataset for each process
+    # get a distinct subset of the dataset for each process by using strides
     dataset = Subset(
         dataset, torch.arange(start=rank, end=len(dataset), step=size, dtype=torch.long)
     )
     # Note: to make distributed training as similar as possible to serial training,
     # we need to turn of shuffling and make sure that `size` evenly divides the batch size
+    assert BATCH_SIZE % size == 0
     train_loader = DataLoader(
         dataset=dataset,
-        batch_size=128 // size,
+        batch_size=BATCH_SIZE // size,
         shuffle=False,
     )
     test_loader = DataLoader(
@@ -77,7 +84,7 @@ if __name__ == "__main__":
     )
 
     # define the model
-    model = MLP(input_size=28 * 28, hidden_size=64, output_size=10)
+    model = MLP(input_size=28 * 28, hidden_size=[64, 64], output_size=10)
     # make sure the initialization is the same on all processes
     assert_sync(get_model_hash(model))
 
@@ -88,17 +95,19 @@ if __name__ == "__main__":
 
     # train the model
     start_time = time.time()
-    num_epochs = 5
-    for epoch in range(num_epochs):
+    for epoch in range(NUM_EPOCHS):
         epoch_start_time = time.time()
         for i, (images, labels) in enumerate(train_loader):
-            images = images.view(-1, 28 * 28)
+            images = images.view(-1, 1, 28, 28)
             outputs = model(images)
             loss = criterion(outputs, labels)
             optimizer.zero_grad()
+            # compute the gradients locally
             loss.backward()
 
             if size > 1:
+                # todo: gather the activations instead of gradients
+                # todo: do this in a single communication step by allocating a large tensor
                 for param in model.parameters():
                     recv = torch.zeros_like(param.grad)
                     comm.Allreduce(param.grad / size, recv, op=MPI.SUM)
@@ -109,7 +118,7 @@ if __name__ == "__main__":
                 rprint(
                     "Epoch [{:2}/{}], Step [{}/{}], Loss: {:.4f}".format(
                         epoch + 1,
-                        num_epochs,
+                        NUM_EPOCHS,
                         i + 1,
                         len(train_loader),
                         loss.item(),
@@ -123,19 +132,27 @@ if __name__ == "__main__":
         correct = 0
         total = 0
         for images, labels in test_loader:
-            images = images.view(-1, 28 * 28)
+            images = images.view(-1, 1, 28, 28)
             outputs = model(images)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
         rprint(
-            "Accuracy of the model on the 10000 test images: {} %".format(
-                100 * correct / total
+            "Accuracy of the model on the {} test images: {} %".format(
+                total, 100 * correct / total
             )
         )
 
     # make sure the final model is the same on all processes
     assert_sync(get_model_hash(model))
 
-    if rank == 0:
+    if False:
         torch.save(model.state_dict(), f"data/models/model_p{size}.pkl")
+
+        # compare the absolute divergence between the two models
+        sequential_model = MLP(input_size=28 * 28, hidden_size=64, output_size=10)
+        sequential_model.load_state_dict(torch.load(f"data/models/model_p1.pkl"))
+        divergence = 0
+        for param1, param2 in zip(model.parameters(), sequential_model.parameters()):
+            divergence += torch.abs(param1 - param2).sum().item()
+        rprint("Absolute divergence cmp to serial weights: {:.8f}".format(divergence))
