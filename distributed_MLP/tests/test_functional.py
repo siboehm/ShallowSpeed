@@ -6,6 +6,7 @@ from minMLP.functional import (
     relu_grad,
     linear_grad,
     softmax_grad,
+    mse_loss,
 )
 
 EPS = 10e-6
@@ -15,7 +16,7 @@ def test_shapes():
     # relu
     x = np.empty((2, 3))
     y = relu(x)
-    dinput = relu_grad(y, x)
+    dinput = relu_grad(y, x > 0)
     assert x.shape == dinput.shape
 
     # linear
@@ -37,10 +38,16 @@ def test_shapes():
     assert dinput.shape == x.shape
 
 
+def test_relu():
+    x = np.array([[-1, 2, -3], [4, -5, 6]])
+    y = relu(x)
+    assert np.allclose(y, np.array([[0, 2, 0], [4, 0, 6]]))
+
+
 def test_relu_grad():
     x = np.array([[-1, -2, -3], [0.1, 5, 6]])
     finite_diff = (relu(x + EPS / 2) - relu(x - EPS / 2)) / EPS
-    assert np.allclose(relu_grad(np.ones_like(x), x), finite_diff)
+    assert np.allclose(relu_grad(np.ones_like(x), x > 0), finite_diff)
 
 
 def I_ij(i, j, n, m):
@@ -104,9 +111,10 @@ def test_linear_grad():
 
 
 def test_softmax():
-    x = np.array([[1, 2, 3], [4, 5, 6]])
+    x = np.array([[-1, 2, -3], [4, 5, 6]])
     y = softmax(x)
     assert np.allclose(y.sum(axis=1), np.ones(y.shape[0]))
+    assert (y > 0).all()
     # softmax is invariant to shifts
     assert np.allclose(softmax(x), softmax(x - 6))
 
@@ -130,3 +138,14 @@ def test_softmax_grad():
     jvp = jacobian_i_fd @ grad_out[0]
     real = softmax_grad(grad_out, x)
     assert np.allclose(jvp, real)
+
+
+def test_mse():
+    input = np.array([[1, 2, 3], [4, 5, 6]])
+    target = np.array([[1, 2, 3], [4, 5, 6]])
+    mse = mse_loss(input, target)
+    assert np.allclose(mse, 0)
+
+    target = np.array([[1, 2, 3], [0, 1, 2]])
+    mse = mse_loss(input, target)
+    assert np.allclose(mse, 8.0)

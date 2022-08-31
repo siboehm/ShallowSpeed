@@ -11,3 +11,5 @@ dependencies:
   - pytorch
   - jupyter
   - torchvision
+  - pyarrow
+  - pytest

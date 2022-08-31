@@ -6,6 +6,7 @@ def relu(input):
 
 
 def relu_grad(grad_output, bitmask):
+    assert bitmask.dtype == bool
     return grad_output * bitmask
 
 
@@ -23,7 +24,7 @@ def linear_grad(grad_output, input, weight, bias):
 def softmax(input):
     # logsumexp trick
     input_exp = np.exp(input - np.max(input))
-    return input_exp / input_exp.sum(axis=1, keepdims=True)
+    return input_exp / (input_exp.sum(axis=1, keepdims=True) + 1e-7)
 
 
 def softmax_grad(grad_output, input):
@@ -32,4 +33,13 @@ def softmax_grad(grad_output, input):
     output = softmax(input)
     new_grad = output * grad_output
     return new_grad - output * new_grad.sum(axis=-1, keepdims=True)
+
+
+def mse_loss(input, target):
+    assert input.shape == target.shape
+    return ((target - input) ** 2).sum() / input.size
+
+
+def mse_loss_grad(input, target):
+    return - 2 * (target - input) / input.size
 

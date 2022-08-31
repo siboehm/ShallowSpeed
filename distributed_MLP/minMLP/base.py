@@ -4,6 +4,7 @@ import numpy as np
 
 class Parameter(ABC):
     """Encapsulates a numpy array and keeps track of its gradient."""
+
     def __init__(self, data: np.array, requires_grad: bool = True):
         self.data = data
         self.grad = np.zeros_like(data)
@@ -18,6 +19,7 @@ class Module(ABC):
     A module is a stateful object, encapsulating a function and keeping track
     of the trainable parameters. It also keeps track of cached activations.
     """
+
     def __init__(self):
         self._params = {}
         self._cache = {}
@@ -41,20 +43,8 @@ class Module(ABC):
         self._training = False
 
     def zero_grad(self):
-        for param in self._params.values():
-            param.grad = None
+        for param in self.parameters():
+            param.grad = param.grad * 0
 
     def parameters(self):
-        return self._params.values()
-
-    def named_parameters(self):
-        return self._params.items()
-
-    def state_dict(self):
-        return {
-            name: param.data for name, param in self.named_parameters()
-        }
-
-    def load_state_dict(self, state_dict):
-        for name, param in self.named_parameters():
-            param.data = state_dict[name]
+        return list(self._params.values())
