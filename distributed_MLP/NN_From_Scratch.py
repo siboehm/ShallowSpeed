@@ -1,20 +1,14 @@
 import time
-
-import pandas as pd
-import time
-from sklearn.datasets import fetch_openml
-import numpy as np
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
 from pathlib import Path
+
 import numpy as np
-import torch
+import pandas as pd
 from mpi4py import MPI
-from torch.utils.data import DataLoader, Subset
-from torchvision import datasets, transforms
+from sklearn.datasets import fetch_openml
+from sklearn.model_selection import train_test_split
 
 from minMLP.functional import mse_loss, mse_loss_grad
-from minMLP.models import MLP
+from minMLP.models import MLP, Distributed_MLP
 from minMLP.optimizer import SGD
 
 
@@ -54,7 +48,7 @@ def download_dataset(save_dir):
 
 
 EPOCHS = 20
-BATCH_SIZE = 64
+GLOBAL_BATCH_SIZE = 64
 
 if __name__ == "__main__":
     # init MPI
@@ -67,11 +61,21 @@ if __name__ == "__main__":
         download_dataset(save_dir)
 
     x_train = pd.read_parquet(save_dir / "x_train.parquet").to_numpy()
-    x_val = pd.read_parquet(save_dir / "x_val.parquet")
     y_train = np.load(save_dir / "y_train.npy")
+
+    x_val = pd.read_parquet(save_dir / "x_val.parquet")
     y_val = np.load(save_dir / "y_val.npy")
 
-    dnn = MLP(sizes=[784, 100, 10])
+    x_train = x_train[rank : len(x_train) : size]
+    y_train = y_train[rank : len(y_train) : size]
+    assert GLOBAL_BATCH_SIZE % size == 0
+    batch_size = GLOBAL_BATCH_SIZE // size
+
+    layer_sizes = [784, 128, 10]
+    if size == 1:
+        dnn = MLP(sizes=layer_sizes)
+    else:
+        dnn = Distributed_MLP(sizes=layer_sizes, comm=comm)
     dnn.train()
     optimizer = SGD(dnn.parameters(), lr=0.03)
 
@@ -84,9 +88,9 @@ if __name__ == "__main__":
                 iteration, time.time() - start_time, accuracy * 100
             )
         )
-        for j in range(0, len(x_train), BATCH_SIZE):
-            x = x_train[j : min(len(x_train), j + BATCH_SIZE), ...]
-            y = y_train[j : min(len(x_train), j + BATCH_SIZE)]
+        for j in range(0, len(x_train), batch_size):
+            x = x_train[j : min(len(x_train), j + batch_size)]
+            y = y_train[j : min(len(y_train), j + batch_size)]
 
             output = dnn.forward(x)
             loss = mse_loss(output, y)

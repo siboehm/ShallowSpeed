@@ -1,4 +1,6 @@
 import numpy as np
+from numpy.random import MT19937, RandomState, SeedSequence
+
 from minMLP.base import Parameter, Module
 from minMLP.functional import (
     relu,
@@ -8,6 +10,8 @@ from minMLP.functional import (
     softmax_grad,
     softmax,
 )
+
+rs = RandomState(MT19937(SeedSequence(123456789)))
 
 
 class ReLU(Module):
@@ -40,7 +44,7 @@ class Linear(Module):
     def __init__(self, in_dims, out_dims):
         super().__init__()
         # should probably be scaled by 1 / sqrt(in_dims)
-        self._params["W"] = Parameter(np.random.uniform(-0.1, 0.1, (out_dims, in_dims)))
+        self._params["W"] = Parameter(rs.uniform(-0.1, 0.1, (out_dims, in_dims)))
         self._params["b"] = Parameter(np.zeros((1, out_dims)))
 
     def forward(self, input):
@@ -74,5 +78,3 @@ class NonLinearLayer(Module):
 
     def backward(self, dout):
         return self.linear.backward(self.relu.backward(dout))
-
-

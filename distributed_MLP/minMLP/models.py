@@ -58,11 +58,12 @@ class DP_Sequential(Sequential):
     def __init__(self, layers: list[Module], comm=MPI.COMM_WORLD):
         super().__init__(layers)
         self.comm = comm
+        assert comm.size > 1
 
     def backward(self, dout):
-        # rescale the gradient to account for the mean in the loss
+        # rescale the gradient to account for the average-ing in the loss
         result = dout / self.comm.size
-        futures = []
+        requests = []
 
         for layer in reversed(self.layers):
             result = layer.backward(result)
@@ -71,18 +72,25 @@ class DP_Sequential(Sequential):
             for param in layer.parameters():
                 if param.requires_grad:
                     # start a non-blocking allReduce
-                    futures.append(
+                    requests.append(
                         self.comm.Iallreduce(
                             sendbuf=MPI.IN_PLACE, recvbuf=param.grad, op=MPI.SUM
                         )
                     )
 
         # after the backwards pass, wait for all communication to finish
-        MPI.Request.Waitall(futures)
-
-        # rescale the final gradients
-        for param in self.parameters():
-            if param.requires_grad:
-                param.grad /= self.comm.size
+        MPI.Request.Waitall(requests)
 
         return result
+
+
+class Distributed_MLP(DP_Sequential):
+    def __init__(self, sizes: list[int], comm=MPI.COMM_WORLD):
+        assert len(sizes) >= 2
+        self.layers = [
+            NonLinearLayer(sizes[i], sizes[i + 1]) for i in range(len(sizes) - 2)
+        ]
+        self.layers.append(Linear(sizes[-2], sizes[-1]))
+        self.layers.append(Softmax())
+
+        super().__init__(self.layers, comm=comm)
