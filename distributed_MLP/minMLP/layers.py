@@ -54,9 +54,7 @@ class Linear(Module):
 
     def backward(self, dout):
         assert self._training
-        dout, dW, db = linear_grad(
-            dout, self._cache["input"], self._params["W"].data, self._params["b"].data
-        )
+        dout, dW, db = linear_grad(dout, self._cache["input"], self._params["W"].data)
 
         # accumulate gradients
         self._params["W"].grad += dW

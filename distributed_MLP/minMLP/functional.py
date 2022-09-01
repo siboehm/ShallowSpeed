@@ -17,7 +17,7 @@ def linear(input, weight, bias):
     return input @ weight.T + bias
 
 
-def linear_grad(grad_output, input, weight, bias):
+def linear_grad(grad_output, input, weight):
     return grad_output @ weight, grad_output.T @ input, grad_output.sum(axis=0)
 
 
