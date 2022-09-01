@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
+
 import numpy as np
 
 
 class Parameter(ABC):
-    """Encapsulates a numpy array and keeps track of its gradient."""
+    """
+    Encapsulates a numpy array and keeps track of its gradient.
+    """
 
     def __init__(self, data: np.array, requires_grad: bool = True):
         self.data = data
@@ -25,15 +28,15 @@ class Module(ABC):
         self._cache = {}
         self._training = True
 
-    def __call__(self, *inputs):
-        return self.forward(*inputs)
+    def __call__(self, input):
+        return self.forward(input)
 
     @abstractmethod
-    def forward(self, *inputs):
+    def forward(self, inputs: np.array):
         raise NotImplementedError
 
     @abstractmethod
-    def backward(self, *dout):
+    def backward(self, dout: np.array):
         raise NotImplementedError
 
     def train(self, mode=True):

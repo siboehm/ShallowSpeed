@@ -1,4 +1,5 @@
 import numpy as np
+
 from minMLP.functional import (
     relu,
     linear,
@@ -64,6 +65,7 @@ def test_linear_grad():
     grad_out = np.arange(4, dtype=float).reshape((1, 4))
 
     # TODO get rid of some duplication by introducing a function
+    # TODO calculate the Jacobian using vectorized operations
     # calculating Jacobian for input using finite differences method
     jacobian_i_fd = np.zeros((3, 4), dtype=float)
     for i in range(3):

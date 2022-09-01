@@ -2,7 +2,6 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/../NNs_from_scratch/.idea/NNs_from_scratch.iml" filepath="$PROJECT_DIR$/../NNs_from_scratch/.idea/NNs_from_scratch.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/distributed_NNs.iml" filepath="$PROJECT_DIR$/.idea/distributed_NNs.iml" />
     </modules>
   </component>

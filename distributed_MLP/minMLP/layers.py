@@ -39,8 +39,9 @@ class Softmax(Module):
 class Linear(Module):
     def __init__(self, in_dims, out_dims):
         super().__init__()
+        # should probably be scaled by 1 / sqrt(in_dims)
         self._params["W"] = Parameter(np.random.uniform(-0.1, 0.1, (out_dims, in_dims)))
-        self._params["b"] = Parameter(np.random.uniform(-0.1, 0.1, (1, out_dims)))
+        self._params["b"] = Parameter(np.zeros((1, out_dims)))
 
     def forward(self, input):
         if self._training:
@@ -75,45 +76,3 @@ class NonLinearLayer(Module):
         return self.linear.backward(self.relu.backward(dout))
 
 
-class MLP(Module):
-    def __init__(self, sizes: list):
-        super().__init__()
-
-        assert len(sizes) >= 2
-        self.layers = [
-            NonLinearLayer(sizes[i], sizes[i + 1]) for i in range(len(sizes) - 2)
-        ]
-        self.layers.append(Linear(sizes[-2], sizes[-1]))
-        self.layers.append(Softmax())
-
-    def forward(self, inputs):
-        result = inputs
-        for layer in self.layers:
-            result = layer(result)
-        return result
-
-    def backward(self, dout):
-        result = dout
-        for layer in reversed(self.layers):
-            result = layer.backward(result)
-        return result
-
-    def train(self, mode=True):
-        self._training = mode
-        for l in self.layers:
-            l.train(mode)
-
-    def eval(self):
-        self._training = False
-        for l in self.layers:
-            l.eval()
-
-    def zero_grad(self):
-        for l in self.layers:
-            l.zero_grad()
-
-    def parameters(self):
-        result = []
-        for l in self.layers:
-            result += l.parameters()
-        return result
