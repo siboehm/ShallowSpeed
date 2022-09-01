@@ -10,6 +10,7 @@ from sklearn.model_selection import train_test_split
 from minMLP.functional import mse_loss, mse_loss_grad
 from minMLP.models import MLP, Distributed_MLP
 from minMLP.optimizer import SGD
+from minMLP.utils import rprint
 
 
 def compute_accuracy(model, x_val, y_val):
@@ -30,7 +31,6 @@ def compute_accuracy(model, x_val, y_val):
 
 
 def download_dataset(save_dir):
-    print("Downloading the dataset at", save_dir.resolve())
     x, y = fetch_openml("mnist_784", version=1, data_home="data_cache", return_X_y=True)
 
     x /= 255.0
@@ -47,8 +47,8 @@ def download_dataset(save_dir):
     np.save(save_dir / "y_val.npy", y_val)
 
 
-EPOCHS = 20
-GLOBAL_BATCH_SIZE = 64
+EPOCHS = 10
+GLOBAL_BATCH_SIZE = 128
 
 if __name__ == "__main__":
     # init MPI
@@ -58,7 +58,11 @@ if __name__ == "__main__":
 
     save_dir = Path("../data/mnist_784/")
     if not save_dir.is_dir():
-        download_dataset(save_dir)
+        if rank == 0:
+            print("Downloading the dataset at", save_dir.resolve())
+            download_dataset(save_dir)
+        # make all processes wait until dataset is downloaded
+        comm.Barrier()
 
     x_train = pd.read_parquet(save_dir / "x_train.parquet").to_numpy()
     y_train = np.load(save_dir / "y_train.npy")
@@ -66,8 +70,8 @@ if __name__ == "__main__":
     x_val = pd.read_parquet(save_dir / "x_val.parquet")
     y_val = np.load(save_dir / "y_val.npy")
 
-    x_train = x_train[rank : len(x_train) : size]
-    y_train = y_train[rank : len(y_train) : size]
+    x_train = x_train[rank : len(x_train) : size].copy()
+    y_train = y_train[rank : len(y_train) : size].copy()
     assert GLOBAL_BATCH_SIZE % size == 0
     batch_size = GLOBAL_BATCH_SIZE // size
 
@@ -77,16 +81,17 @@ if __name__ == "__main__":
     else:
         dnn = Distributed_MLP(sizes=layer_sizes, comm=comm)
     dnn.train()
-    optimizer = SGD(dnn.parameters(), lr=0.03)
+    optimizer = SGD(dnn.parameters(), lr=0.1)
 
     start_time = time.time()
     dnn.train()
     for iteration in range(EPOCHS):
         accuracy = compute_accuracy(dnn, x_val, y_val)
-        print(
+        rprint(
+            comm,
             "Epoch: {0}, Time Spent: {1:.2f}s, Accuracy: {2:.2f}%".format(
                 iteration, time.time() - start_time, accuracy * 100
-            )
+            ),
         )
         for j in range(0, len(x_train), batch_size):
             x = x_train[j : min(len(x_train), j + batch_size)]
@@ -101,8 +106,9 @@ if __name__ == "__main__":
             optimizer.step()
 
     accuracy = compute_accuracy(dnn, x_val, y_val)
-    print(
+    rprint(
+        comm,
         "Epoch: {0}, Time Spent: {1:.2f}s, Accuracy: {2:.2f}%".format(
             EPOCHS, time.time() - start_time, accuracy * 100
-        )
+        ),
     )
