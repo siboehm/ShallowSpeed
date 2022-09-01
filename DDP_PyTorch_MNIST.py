@@ -5,7 +5,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from mpi4py import MPI
-from hashlib import sha1
+
+from minMLP.utils import get_model_hash, assert_sync, rprint
 
 # Make sure that all kernel's used by PyTorch run in a single thread
 # Eg the matrix multiplication kernel by default will use multiple threads (this is called intra-op parallelism)
@@ -25,30 +26,6 @@ class MLP(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
-
-
-def get_model_hash(model):
-    # this is probably not the most efficient way to do this, but it's
-    # not straightforward to get a deterministic, content-based hash of a model's parameters
-    hash_str = ""
-    for param in model.parameters():
-        numpy_param = param.data.cpu().numpy()
-        # concat the strings to form a single hash later
-        hash_str += sha1(numpy_param).hexdigest()
-    # hash to concatenated strings
-    return sha1(hash_str.encode("utf-8")).hexdigest()
-
-
-def rprint(*args, **kwargs):
-    if MPI.COMM_WORLD.Get_rank() == 0:
-        print(*args, **kwargs)
-
-
-def assert_sync(model_hash):
-    # check that all processes have the same model hash
-    model_hash_all = comm.gather(model_hash, root=0)
-    if MPI.COMM_WORLD.rank == 0 and len(set(model_hash_all)) > 1:
-        raise ValueError("Model hash mismatch")
 
 
 NUM_EPOCHS = 5
@@ -86,7 +63,7 @@ if __name__ == "__main__":
     # define the model
     model = MLP(input_size=28 * 28, hidden_size=64, output_size=10)
     # make sure the initialization is the same on all processes
-    assert_sync(get_model_hash(model))
+    assert_sync(comm, get_model_hash(model))
 
     # define the loss function
     criterion = nn.CrossEntropyLoss()
@@ -141,11 +118,11 @@ if __name__ == "__main__":
         rprint(
             "Accuracy of the model on the {} test images: {} %".format(
                 total, 100 * correct / total
-            )
+            ),
         )
 
     # make sure the final model is the same on all processes
-    assert_sync(get_model_hash(model))
+    assert_sync(comm, get_model_hash(model))
 
     torch.save(model.state_dict(), f"data/models/model_p{size}.pkl")
 
@@ -156,5 +133,5 @@ if __name__ == "__main__":
     for param1, param2 in zip(model.parameters(), sequential_model.parameters()):
         divergence += torch.abs(param1 - param2).sum().item()
     rprint(
-        "Total absolute divergence cmp'd to serial weights: {:.8f}".format(divergence)
+        "Total absolute divergence cmp'd to serial weights: {:.8f}".format(divergence),
     )

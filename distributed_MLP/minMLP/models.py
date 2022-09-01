@@ -67,18 +67,20 @@ class DP_Sequential(Sequential):
 
         for layer in reversed(self.layers):
             result = layer.backward(result)
-
-            # iterate over Parameters for which we just calculated the gradient
+            # start a non-blocking AllReduce for the parameters for which we just
+            # calculated the final gradient.
+            # This interleaves communication of this layer's gradients with
+            # computation of the next layers gradients
             for param in layer.parameters():
                 if param.requires_grad:
-                    # start a non-blocking allReduce
                     requests.append(
                         self.comm.Iallreduce(
                             sendbuf=MPI.IN_PLACE, recvbuf=param.grad, op=MPI.SUM
                         )
                     )
 
-        # after the backwards pass, wait for all communication to finish
+        # after the full backwards pass we wait for all communication to finish
+        # only then can we be certain that the gradients are the same on all processes
         MPI.Request.Waitall(requests)
 
         return result

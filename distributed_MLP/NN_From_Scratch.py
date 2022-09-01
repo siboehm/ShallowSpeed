@@ -10,7 +10,7 @@ from sklearn.model_selection import train_test_split
 from minMLP.functional import mse_loss, mse_loss_grad
 from minMLP.models import MLP, Distributed_MLP
 from minMLP.optimizer import SGD
-from minMLP.utils import rprint
+from minMLP.utils import rprint, get_model_hash, assert_sync
 
 
 def compute_accuracy(model, x_val, y_val):
@@ -48,6 +48,7 @@ def download_dataset(save_dir):
 
 
 EPOCHS = 10
+# We use a big batch size, to make training more amenable to parallelization
 GLOBAL_BATCH_SIZE = 128
 
 if __name__ == "__main__":
@@ -64,12 +65,16 @@ if __name__ == "__main__":
         # make all processes wait until dataset is downloaded
         comm.Barrier()
 
+    # each process loads the whole dataset
+    # this is inefficient for large datasets, but fine for tiny MNIST
     x_train = pd.read_parquet(save_dir / "x_train.parquet").to_numpy()
     y_train = np.load(save_dir / "y_train.npy")
-
     x_val = pd.read_parquet(save_dir / "x_val.parquet")
     y_val = np.load(save_dir / "y_val.npy")
 
+    # each process selects its subset of the datasets by a `rank`-offset and `size`-strides
+    # the copy() is super important, else the array is not continuous in memory
+    # which results in horrible matmul performance
     x_train = x_train[rank : len(x_train) : size].copy()
     y_train = y_train[rank : len(y_train) : size].copy()
     assert GLOBAL_BATCH_SIZE % size == 0
@@ -77,18 +82,17 @@ if __name__ == "__main__":
 
     layer_sizes = [784, 128, 10]
     if size == 1:
-        dnn = MLP(sizes=layer_sizes)
+        model = MLP(sizes=layer_sizes)
     else:
-        dnn = Distributed_MLP(sizes=layer_sizes, comm=comm)
-    dnn.train()
-    optimizer = SGD(dnn.parameters(), lr=0.1)
+        model = Distributed_MLP(sizes=layer_sizes, comm=comm)
+    # batch size is huge, so we can use a big learning rate
+    optimizer = SGD(model.parameters(), lr=0.1)
 
     start_time = time.time()
-    dnn.train()
+    model.train()
     for iteration in range(EPOCHS):
-        accuracy = compute_accuracy(dnn, x_val, y_val)
+        accuracy = compute_accuracy(model, x_val, y_val)
         rprint(
-            comm,
             "Epoch: {0}, Time Spent: {1:.2f}s, Accuracy: {2:.2f}%".format(
                 iteration, time.time() - start_time, accuracy * 100
             ),
@@ -97,18 +101,20 @@ if __name__ == "__main__":
             x = x_train[j : min(len(x_train), j + batch_size)]
             y = y_train[j : min(len(y_train), j + batch_size)]
 
-            output = dnn.forward(x)
+            output = model.forward(x)
             loss = mse_loss(output, y)
             dout = mse_loss_grad(output, y)
 
-            dnn.zero_grad()
-            dnn.backward(dout)
+            model.zero_grad()
+            model.backward(dout)
             optimizer.step()
 
-    accuracy = compute_accuracy(dnn, x_val, y_val)
+    accuracy = compute_accuracy(model, x_val, y_val)
     rprint(
-        comm,
         "Epoch: {0}, Time Spent: {1:.2f}s, Accuracy: {2:.2f}%".format(
             EPOCHS, time.time() - start_time, accuracy * 100
         ),
     )
+
+    # Sanity check: Make sure processes have the same model weights
+    assert_sync(comm, get_model_hash(model))
