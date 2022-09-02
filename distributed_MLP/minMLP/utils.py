@@ -15,7 +15,7 @@ def get_model_hash(model):
     # not straightforward to get a deterministic, content-based hash of a model's parameters
     hash_str = ""
     for param in model.parameters():
-        if isinstance(param, torch.Tensor):
+        if torch.is_tensor(param):
             param = param.data.cpu().numpy()
         if isinstance(param, Parameter):
             param = param.data

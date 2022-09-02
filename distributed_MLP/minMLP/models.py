@@ -8,6 +8,8 @@ class Sequential(Module):
     def __init__(self, layers: list[Module]):
         super().__init__()
         self.layers = layers
+        self._grad_hooks = []
+        self._post_grad_hooks = []
 
     def forward(self, inputs):
         result = inputs
@@ -15,10 +17,30 @@ class Sequential(Module):
             result = layer(result)
         return result
 
+    def register_grad_hook(self, hook):
+        """
+        Register a hook to be run when the gradient for a parameter has been calculated
+        """
+        self._grad_hooks.append(hook)
+
+    def register_post_grad_hook(self, hook):
+        """
+        Register a hook to be run before returning from the backwards()-function
+        """
+        self._post_grad_hooks.append(hook)
+
     def backward(self, dout):
         result = dout
         for layer in reversed(self.layers):
             result = layer.backward(result)
+
+            for hook in self._grad_hooks:
+                for param in layer.parameters():
+                    hook(param)
+
+        for hook in self._post_grad_hooks:
+            hook(self.parameters())
+
         return result
 
     def train(self, mode=True):
@@ -43,7 +65,7 @@ class Sequential(Module):
 
 
 class MLP(Sequential):
-    def __init__(self, sizes: list[int]):
+    def __init__(self, sizes: list[int], comm=None):
         assert len(sizes) >= 2
         self.layers = [
             NonLinearLayer(sizes[i], sizes[i + 1]) for i in range(len(sizes) - 2)
@@ -53,46 +75,35 @@ class MLP(Sequential):
 
         super().__init__(self.layers)
 
-
-class DP_Sequential(Sequential):
-    def __init__(self, layers: list[Module], comm=MPI.COMM_WORLD):
-        super().__init__(layers)
         self.comm = comm
-        assert comm.size > 1
-
-    def backward(self, dout):
-        # rescale the gradient to account for the average-ing in the loss
-        result = dout / self.comm.size
-        requests = []
-
-        for layer in reversed(self.layers):
-            result = layer.backward(result)
+        # setup hooks for data-parallel backprop
+        if self.comm is not None:
             # start a non-blocking AllReduce for the parameters for which we just
             # calculated the final gradient.
             # This interleaves communication of this layer's gradients with
             # computation of the next layers gradients
-            for param in layer.parameters():
+            def allreduce_gradient(param):
                 if param.requires_grad:
-                    requests.append(
-                        self.comm.Iallreduce(
-                            sendbuf=MPI.IN_PLACE, recvbuf=param.grad, op=MPI.SUM
-                        )
+                    param._request = self.comm.Iallreduce(
+                        sendbuf=MPI.IN_PLACE, recvbuf=param.grad, op=MPI.SUM
                     )
 
-        # after the full backwards pass we wait for all communication to finish
-        # only then can we be certain that the gradients are the same on all processes
-        MPI.Request.Waitall(requests)
+            self.register_grad_hook(allreduce_gradient)
 
-        return result
+            # after the full backwards pass we wait for all communication to finish
+            # only then can we be certain that the gradients are the same on all processes
+            def wait_for_comms(params):
+                requests = [
+                    param._request
+                    for param in params
+                    if param.requires_grad and param._request is not None
+                ]
+                MPI.Request.Waitall(requests)
 
+            self.register_post_grad_hook(wait_for_comms)
 
-class Distributed_MLP(DP_Sequential):
-    def __init__(self, sizes: list[int], comm=MPI.COMM_WORLD):
-        assert len(sizes) >= 2
-        self.layers = [
-            NonLinearLayer(sizes[i], sizes[i + 1]) for i in range(len(sizes) - 2)
-        ]
-        self.layers.append(Linear(sizes[-2], sizes[-1]))
-        self.layers.append(Softmax())
-
-        super().__init__(self.layers, comm=comm)
+    def backward(self, dout):
+        # rescale the gradient to account for the average-ing in the loss
+        if self.comm is not None:
+            dout /= self.comm.size
+        return super().backward(dout)

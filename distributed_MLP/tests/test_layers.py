@@ -1,4 +1,4 @@
-from minMLP.layers import MLP
+from minMLP.models import MLP
 from minMLP.functional import mse_loss_grad
 import numpy as np
 

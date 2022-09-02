@@ -13,3 +13,4 @@ dependencies:
   - torchvision
   - pyarrow
   - pytest
+  - pytest-mpi

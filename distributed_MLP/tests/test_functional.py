@@ -26,7 +26,7 @@ def test_shapes():
     x = np.empty((20, 10))
     y = linear(x, weight, bias)
     assert y.shape == (20, 3)
-    dinput, dweight, dbias = linear_grad(np.empty((20, 3)), x, weight, bias)
+    dinput, dweight, dbias = linear_grad(np.empty((20, 3)), x, weight)
     assert dinput.shape == x.shape
     assert dweight.shape == weight.shape
     assert dbias.shape == bias.shape
@@ -78,7 +78,7 @@ def test_linear_grad():
                 / EPS
             )[0][o]
     jvp = jacobian_i_fd @ grad_out[0]
-    real = linear_grad(grad_out, x, W, b)[0]
+    real = linear_grad(grad_out, x, W)[0]
     assert np.allclose(jvp, real)
 
     # calculating Jacobian for weights using finite differences method
@@ -94,7 +94,7 @@ def test_linear_grad():
                     / EPS
                 )[0][o]
     jvp = jacobian_W_fd @ grad_out[0]
-    real = linear_grad(grad_out, x, W, b)[1]
+    real = linear_grad(grad_out, x, W)[1]
     assert np.allclose(jvp, real)
 
     # calculating Jacobian for bias using finite differences method
@@ -109,7 +109,7 @@ def test_linear_grad():
                 / EPS
             )[0][o]
     jvp = jacobian_b_fd @ grad_out[0]
-    real = linear_grad(grad_out, x, W, b)[2]
+    real = linear_grad(grad_out, x, W)[2]
     assert np.allclose(jvp, real)
 
 

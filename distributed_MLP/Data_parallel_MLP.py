@@ -8,7 +8,7 @@ from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
 
 from minMLP.functional import mse_loss, mse_loss_grad
-from minMLP.models import MLP, Distributed_MLP
+from minMLP.models import MLP
 from minMLP.optimizer import SGD
 from minMLP.utils import rprint, get_model_hash, assert_sync
 
@@ -80,11 +80,11 @@ if __name__ == "__main__":
     assert GLOBAL_BATCH_SIZE % size == 0
     batch_size = GLOBAL_BATCH_SIZE // size
 
-    layer_sizes = [784, 128, 10]
+    layer_sizes = [784, 256, 128, 128, 10]
     if size == 1:
-        model = MLP(sizes=layer_sizes)
+        model = MLP(sizes=layer_sizes, comm=None)
     else:
-        model = Distributed_MLP(sizes=layer_sizes, comm=comm)
+        model = MLP(sizes=layer_sizes, comm=comm)
     # batch size is huge, so we can use a big learning rate
     optimizer = SGD(model.parameters(), lr=0.1)
 
