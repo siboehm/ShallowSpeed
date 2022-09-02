@@ -9,6 +9,8 @@ from minMLP.functional import (
     linear_grad,
     softmax_grad,
     softmax,
+    mse_loss,
+    mse_loss_grad,
 )
 
 rs = RandomState(MT19937(SeedSequence(123456789)))
@@ -62,6 +64,26 @@ class Linear(Module):
 
         del self._cache["input"]
         return dout
+
+
+class MSELoss(Module):
+    def __init__(self, rescale_factor: int):
+        super().__init__()
+        self.rescale_factor = rescale_factor
+
+    # You don't need to calculate the loss to compute the gradient
+    # so we just don't do it
+    def forward(self, input: np.array):
+        if self._training:
+            self._cache["input"] = input
+        return input
+
+    def backward(self, target):
+        assert self._training
+        dout = mse_loss_grad(self._cache["input"], target)
+        del self._cache["input"]
+        # rescale the gradient to account for the average-ing in the loss
+        return dout / self.rescale_factor
 
 
 class NonLinearLayer(Module):

@@ -3,6 +3,7 @@ from minMLP.base import Parameter
 
 class SGD:
     def __init__(self, parameters: list[Parameter], lr: float):
+        # Boring stateless optimizer is boring
         self._params = parameters
         self._lr = lr
 
