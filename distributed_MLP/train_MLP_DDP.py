@@ -32,7 +32,7 @@ def compute_accuracy(model, x_val, y_val):
 EPOCHS = 10
 # We use a big batch size, to make training more amenable to parallelization
 GLOBAL_BATCH_SIZE = 128
-N_MUBATCHES = 1
+N_MUBATCHES = 8
 
 
 if __name__ == "__main__":

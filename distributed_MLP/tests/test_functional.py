@@ -146,11 +146,11 @@ def test_softmax_grad():
 
 def test_mse():
     # TODO write a grad test for MSE
-    input = np.array([[1, 2, 3], [4, 5, 6]])
-    target = np.array([[1, 2, 3], [4, 5, 6]])
-    mse = mse_loss(input, target)
+    input = np.array([[1, 0, 0], [0, 1, 0]])
+    target = np.array([[1, 0, 0], [0, 1, 0]])
+    mse = mse_loss(input, target, input.shape[0])
     assert np.allclose(mse, 0)
 
-    target = np.array([[1, 2, 3], [0, 1, 2]])
-    mse = mse_loss(input, target)
-    assert np.allclose(mse, 8.0)
+    input = np.array([[0.25, 0.5, 0.25], [0.5, 0.5, 0.0]])
+    mse = mse_loss(input, target, input.shape[0])
+    assert np.allclose(mse, (0.625 + 0.75) / 2)

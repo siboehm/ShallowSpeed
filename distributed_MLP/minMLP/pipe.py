@@ -11,7 +11,7 @@ class PipelineInstruction(Enum):
     ZeroGrad = 0
     Forward = 1
     BackwardGradAccumulate = 2
-    BackwardGradReduce = 3
+    BackwardGradAllReduce = 3
     LoadMicroBatch = 4
     OptimizerStep = 5
 
@@ -45,11 +45,10 @@ class DataParallelSchedule(Schedule):
                 (PipelineInstruction.Forward, {}),
             ]
             if microbatch_id == self.num_micro_batches - 1:
-                cmds.append((PipelineInstruction.BackwardGradReduce, {}))
+                cmds.append((PipelineInstruction.BackwardGradAllReduce, {}))
+                cmds.append((PipelineInstruction.OptimizerStep, {}))
             else:
                 cmds.append((PipelineInstruction.BackwardGradAccumulate, {}))
-
-            cmds.append((PipelineInstruction.OptimizerStep, {}))
             yield cmds
 
 
@@ -164,7 +163,7 @@ class Worker:
                         self.load_micro_batch(batch_id, **kwargs)
                     case PipelineInstruction.Forward:
                         self.forward()
-                    case PipelineInstruction.BackwardGradReduce:
+                    case PipelineInstruction.BackwardGradAllReduce:
                         self.backward_and_reduce()
                     case PipelineInstruction.BackwardGradAccumulate:
                         self.backward_accumulate()
@@ -176,7 +175,9 @@ class Worker:
                         raise NotImplementedError(command)
 
     def load_micro_batch(self, batch_id, micro_batch_id):
-        self.inputs_fw, self.inputs_bw = self.dataset.load_micro_batch(batch_id, micro_batch_id)
+        self.inputs_fw, self.inputs_bw = self.dataset.load_micro_batch(
+            batch_id, micro_batch_id
+        )
 
     def forward(self):
         self.outputs_fw = self.model.forward(self.inputs_fw)
@@ -205,4 +206,3 @@ class Worker:
 
     def _is_last_stage(self):
         return self.stage_id == self.pipeline_depth - 1
-
