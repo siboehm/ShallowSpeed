@@ -14,3 +14,4 @@ dependencies:
   - pyarrow
   - pytest
   - pytest-mpi
+  - pre-commit

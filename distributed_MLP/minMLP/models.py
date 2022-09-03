@@ -1,7 +1,6 @@
-from mpi4py import MPI
-
 from minMLP.base import Module
-from minMLP.layers import NonLinearLayer, Linear, Softmax
+from minMLP.layers import Linear, NonLinearLayer, Softmax
+from mpi4py import MPI
 
 
 class Sequential(Module):

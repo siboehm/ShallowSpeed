@@ -3,13 +3,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from mpi4py import MPI
-
-from minMLP.layers import NonLinearLayer, Linear, Softmax, MSELoss
+from minMLP.layers import Linear, MSELoss, NonLinearLayer, Softmax
 from minMLP.models import Sequential
 from minMLP.optimizer import SGD
-from minMLP.pipe import DataParallelSchedule, Worker, Dataset
-from minMLP.utils import rprint, get_model_hash, assert_sync
+from minMLP.pipe import DataParallelSchedule, Dataset, Worker
+from minMLP.utils import assert_sync, get_model_hash, rprint
+from mpi4py import MPI
 
 
 def compute_accuracy(model, x_val, y_val):

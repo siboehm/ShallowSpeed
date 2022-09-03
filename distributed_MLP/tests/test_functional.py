@@ -1,13 +1,12 @@
 import numpy as np
-
 from minMLP.functional import (
-    relu,
     linear,
-    softmax,
-    relu_grad,
     linear_grad,
-    softmax_grad,
     mse_loss,
+    relu,
+    relu_grad,
+    softmax,
+    softmax_grad,
 )
 
 EPS = 10e-6

@@ -1,12 +1,12 @@
 import time
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from minMLP.utils import assert_sync, get_model_hash, rprint
+from mpi4py import MPI
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
-from mpi4py import MPI
-
-from minMLP.utils import get_model_hash, assert_sync, rprint
 
 # Make sure that all kernel's used by PyTorch run in a single thread
 # Eg the matrix multiplication kernel by default will use multiple threads (this is called intra-op parallelism)

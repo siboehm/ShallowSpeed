@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from enum import Enum, auto
-import pandas as pd
-import numpy as np
-from mpi4py import MPI
+from enum import Enum
 
+import numpy as np
+import pandas as pd
 from minMLP.models import Sequential
+from mpi4py import MPI
 
 
 class PipelineInstruction(Enum):
@@ -31,6 +31,14 @@ class Schedule(ABC):
         """
         pass
 
+    @property
+    def is_last_stage(self):
+        return self.stage_id == self.num_stages - 1
+
+    @property
+    def is_first_stage(self):
+        return self.stage_id == 0
+
 
 class DataParallelSchedule(Schedule):
     """
@@ -40,14 +48,24 @@ class DataParallelSchedule(Schedule):
     def steps(self):
         yield [(PipelineInstruction.ZeroGrad, {})]
         for microbatch_id in range(self.num_micro_batches):
-            cmds = [
-                (PipelineInstruction.LoadMicroBatch, {"micro_batch_id": microbatch_id}),
-                (PipelineInstruction.Forward, {}),
-            ]
+            cmds = []
+
+            if self.is_first_stage:
+                cmds.append(
+                    (
+                        PipelineInstruction.LoadMicroBatch,
+                        {"micro_batch_id": microbatch_id},
+                    )
+                )
+
+            cmds.append((PipelineInstruction.Forward, {}))
+
             if microbatch_id == self.num_micro_batches - 1:
+                # Interleaved backprop & DP allreduce, followed by optimizer step
                 cmds.append((PipelineInstruction.BackwardGradAllReduce, {}))
                 cmds.append((PipelineInstruction.OptimizerStep, {}))
             else:
+                # Standard backprop
                 cmds.append((PipelineInstruction.BackwardGradAccumulate, {}))
             yield cmds
 
@@ -203,6 +221,3 @@ class Worker:
 
     def zero_grad(self):
         self.model.zero_grad()
-
-    def _is_last_stage(self):
-        return self.stage_id == self.pipeline_depth - 1

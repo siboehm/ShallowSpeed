@@ -1,7 +1,7 @@
-from minMLP.layers import Softmax, Linear, NonLinearLayer
-from minMLP.models import Sequential
-from minMLP.functional import mse_loss_grad
 import numpy as np
+from minMLP.functional import mse_loss_grad
+from minMLP.layers import Linear, NonLinearLayer, Softmax
+from minMLP.models import Sequential
 
 
 def test_MLP_basic():

@@ -1,17 +1,16 @@
 import numpy as np
-from numpy.random import MT19937, RandomState, SeedSequence
-
-from minMLP.base import Parameter, Module
+from minMLP.base import Module, Parameter
 from minMLP.functional import (
-    relu,
-    relu_grad,
     linear,
     linear_grad,
-    softmax_grad,
-    softmax,
     mse_loss,
     mse_loss_grad,
+    relu,
+    relu_grad,
+    softmax,
+    softmax_grad,
 )
+from numpy.random import MT19937, RandomState, SeedSequence
 
 rs = RandomState(MT19937(SeedSequence(123456789)))
 

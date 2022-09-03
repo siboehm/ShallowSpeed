@@ -8,6 +8,7 @@ Implemented using plain numpy & mpi4py.
 ```bash
 conda env create
 pip install -e .
+# M1 Macs: conda install "libblas=*=*accelerate"
 # download data
 python scripts/download_MNIST.py
 ```
