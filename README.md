@@ -1,7 +1,7 @@
-# distributed MLPs
+# Shallowspeed
 
-A POC framework for training sequential models, distributed across CPUs.
-Implemented using plain numpy & mpi4py.
+A tiny implementation of distributed training for sequential deep learning models.
+Implemented using plain Numpy & mpi4py.
 
 
 ## Setups
@@ -9,6 +9,5 @@ Implemented using plain numpy & mpi4py.
 conda env create
 pip install -e .
 # M1 Macs: conda install "libblas=*=*accelerate"
-# download data
-python scripts/download_MNIST.py
+python download_dataset.py
 ```
