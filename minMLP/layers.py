@@ -14,15 +14,15 @@ from minMLP.functional import (
 
 
 class ReLU(Module):
-    def forward(self, input):
+    def forward(self, inputs, mubatch_id=0):
         if self._training:
-            self._cache["bitmask"] = input > 0
-        return relu(input)
+            self._cache[f"bitmask_{mubatch_id}"] = inputs > 0
+        return relu(inputs)
 
-    def backward(self, dout):
+    def backward(self, dout, mubatch_id=0):
         assert self._training
-        dout = relu_grad(dout, self._cache["bitmask"])
-        del self._cache["bitmask"]
+        dout = relu_grad(dout, self._cache[f"bitmask_{mubatch_id}"])
+        del self._cache[f"bitmask_{mubatch_id}"]
         return dout
 
     def __repr__(self):
@@ -30,15 +30,15 @@ class ReLU(Module):
 
 
 class Softmax(Module):
-    def forward(self, inputs):
+    def forward(self, inputs, mubatch_id=0):
         if self._training:
-            self._cache["input"] = inputs
+            self._cache[f"input_{mubatch_id}"] = inputs
         return softmax(inputs)
 
-    def backward(self, dout):
+    def backward(self, dout, mubatch_id=0):
         assert self._training
-        dout = softmax_grad(dout, self._cache["input"])
-        del self._cache["input"]
+        dout = softmax_grad(dout, self._cache[f"input_{mubatch_id}"])
+        del self._cache[f"input_{mubatch_id}"]
         return dout
 
     def __repr__(self):
@@ -61,28 +61,30 @@ class Linear(Module):
         )
         self._params["b"] = Parameter(np.zeros((1, out_dims), dtype=np.float32))
 
-    def forward(self, input):
+    def forward(self, inputs, mubatch_id=0):
         if self._training:
-            self._cache["input"] = input
-        result = linear(input, self._params["W"].data, self._params["b"].data)
+            self._cache[f"input_{mubatch_id}"] = inputs
+        result = linear(inputs, self._params["W"].data, self._params["b"].data)
 
         if self.activation:
-            return self.activation(result)
+            return self.activation(result, mubatch_id)
         return result
 
-    def backward(self, dout):
+    def backward(self, dout, mubatch_id=0):
         assert self._training
 
         if self.activation:
-            dout = self.activation.backward(dout)
+            dout = self.activation.backward(dout, mubatch_id)
 
-        dout, dW, db = linear_grad(dout, self._cache["input"], self._params["W"].data)
+        dout, dW, db = linear_grad(
+            dout, self._cache[f"input_{mubatch_id}"], self._params["W"].data
+        )
 
         # accumulate gradients
         self._params["W"].grad += dW
         self._params["b"].grad += db
 
-        del self._cache["input"]
+        del self._cache[f"input_{mubatch_id}"]
         return dout
 
     def __repr__(self):
@@ -96,15 +98,17 @@ class MSELoss(Module):
 
     # You don't need to calculate the loss to compute the gradient
     # so we just don't do it
-    def forward(self, input: np.array):
+    def forward(self, input: np.array, mubatch_id=0):
         if self._training:
-            self._cache["input"] = input
+            self._cache[f"input_{mubatch_id}"] = input
         return input
 
-    def backward(self, target):
+    def backward(self, target, mubatch_id=0):
         assert self._training
-        dout = mse_loss_grad(self._cache["input"], target, self.batch_size)
-        del self._cache["input"]
+        dout = mse_loss_grad(
+            self._cache[f"input_{mubatch_id}"], target, self.batch_size
+        )
+        del self._cache[f"input_{mubatch_id}"]
         return dout
 
     def __repr__(self):
@@ -118,10 +122,10 @@ class Sequential(Module):
         self._grad_hooks = []
         self._post_grad_hooks = []
 
-    def forward(self, inputs):
+    def forward(self, inputs, mubatch_id=0):
         result = inputs
         for layer in self.layers:
-            result = layer(result)
+            result = layer(result, mubatch_id)
         return result
 
     def register_grad_hook(self, hook):
@@ -143,10 +147,10 @@ class Sequential(Module):
     def reset_post_grad_hooks(self):
         self._post_grad_hooks = []
 
-    def backward(self, dout):
+    def backward(self, dout, mubatch_id=0):
         result = dout
         for layer in reversed(self.layers):
-            result = layer.backward(result)
+            result = layer.backward(result, mubatch_id)
 
             for hook in self._grad_hooks:
                 for param in layer.parameters():

@@ -28,15 +28,15 @@ class Module(ABC):
         self._cache = {}
         self._training = True
 
-    def __call__(self, inputs):
-        return self.forward(inputs)
+    def __call__(self, inputs, mubatch_id=0):
+        return self.forward(inputs, mubatch_id=mubatch_id)
 
     @abstractmethod
-    def forward(self, inputs: np.array):
+    def forward(self, inputs: np.array, mubatch_id=0):
         raise NotImplementedError
 
     @abstractmethod
-    def backward(self, dout: np.array):
+    def backward(self, dout: np.array, mubatch_id=0):
         raise NotImplementedError
 
     def train(self):

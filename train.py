@@ -8,7 +8,13 @@ from mpi4py import MPI
 from minMLP.dataset import Dataset
 from minMLP.layers import MLP
 from minMLP.optimizer import SGD
-from minMLP.pipe import DataParallelSchedule, InferenceSchedule, Worker
+from minMLP.pipe import (
+    GPipeSchedule,
+    InferenceSchedule,
+    NaiveParallelSchedule,
+    PipeDreamSchedule,
+    Worker,
+)
 from minMLP.utils import assert_sync, get_model_hash
 
 
@@ -41,6 +47,12 @@ def compute_accuracy(model, worker, dataset):
         return correct / total
 
 
+SCHEDULE_NAME_TO_CLS = {
+    "naive": NaiveParallelSchedule,
+    "gpipe": GPipeSchedule,
+    "pipedream": PipeDreamSchedule,
+}
+
 EPOCHS = 20
 # We use a big batch size, to make training more amenable to parallelization
 GLOBAL_BATCH_SIZE = 128
@@ -57,7 +69,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--pp", type=int, default=1, help="Number of pipeline stages")
     parser.add_argument(
-        "--schedule", type=str, choices=["pipedream", "naive"], default="naive"
+        "--schedule", type=str, choices=["pipedream", "gpipe", "naive"], default="naive"
     )
     args = parser.parse_args()
     DP_tile_factor = args.dp
@@ -75,6 +87,8 @@ if __name__ == "__main__":
     # create MPI communicators for data parallel AllReduce & pipeline parallel send & recv
     # if the `color=` parameter is the same, then those two workers end up in the same communicator
     dp_comm = MPI.COMM_WORLD.Split(color=MPI.COMM_WORLD.Get_rank() % PP_tile_factor)
+    # to run it truly distributed (like on a RaspberryPi cluster) you'd use comm.Split_type
+    # instead of this color splitting, eg TYPE_SOCKET for PP
     pp_comm = MPI.COMM_WORLD.Split(color=MPI.COMM_WORLD.Get_rank() // PP_tile_factor)
     # sanity check
     assert dp_comm.Get_size() == DP_tile_factor and pp_comm.Get_size() == PP_tile_factor
@@ -123,7 +137,7 @@ if __name__ == "__main__":
             )
 
         for batch_id in range(0, dataset.get_num_batches()):
-            schedule = DataParallelSchedule(
+            schedule = SCHEDULE_NAME_TO_CLS[args.schedule](
                 num_micro_batches=N_MUBATCHES,
                 num_stages=PP_tile_factor,
                 stage_id=pp_comm.rank,

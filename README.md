@@ -22,5 +22,5 @@ mpirun -n 4 python train.py --dp 4
 # Pipeline parallel distributed training
 mpirun -n 4 python train.py --pp 4 --schedule naive
 # Data & pipeline parallel distributed training
-mpirun -n 8 python train.py --dp 2 --pp 4 --schedule pipedream
+mpirun -n 8 python train.py --dp 2 --pp 4 --schedule gpipe
 ```

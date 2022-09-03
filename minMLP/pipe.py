@@ -1,5 +1,6 @@
+import dataclasses
 from abc import ABC, abstractmethod
-from enum import Enum
+from dataclasses import dataclass
 
 import numpy as np
 from mpi4py import MPI
@@ -8,18 +9,79 @@ from minMLP.dataset import Dataset
 from minMLP.layers import MLP
 
 
-class PipeInstr(Enum):
-    ZeroGrad = 0
-    Forward = 1
-    BackwardGradAccumulate = 2
-    BackwardGradAllReduce = 3
-    LoadMicroBatchInput = 4
-    LoadMicroBatchTarget = 5
-    OptimizerStep = 6
-    RecvActivations = 7
-    SendActivations = 8
-    ReceiveOutputGrad = 9
-    SendInputGrad = 10
+class PipeInstr:
+    pass
+
+
+@dataclass
+class ZeroGrad(PipeInstr):
+    pass
+
+
+@dataclass
+class OptimizerStep(PipeInstr):
+    pass
+
+
+@dataclass
+class BufferPipeInstr(PipeInstr):
+    buffer_id: int
+
+
+@dataclass
+class RecvActivations(BufferPipeInstr):
+    pass
+
+
+@dataclass
+class SendActivations(BufferPipeInstr):
+    pass
+
+
+@dataclass
+class RecvOutputGrad(BufferPipeInstr):
+    pass
+
+
+@dataclass
+class SendInputGrad(BufferPipeInstr):
+    pass
+
+
+@dataclass
+class MuBatchPipeInstr(PipeInstr):
+    buffer_id: int
+    mubatch_id: int
+
+
+@dataclass
+class Forward(MuBatchPipeInstr):
+    pass
+
+
+@dataclass
+class BackwardGradAcc(MuBatchPipeInstr):
+    pass
+
+
+@dataclass
+class BackwardGradAllReduce(MuBatchPipeInstr):
+    pass
+
+
+@dataclass
+class LoadInstruction(MuBatchPipeInstr):
+    pass
+
+
+@dataclass
+class LoadMuBatchInput(LoadInstruction):
+    pass
+
+
+@dataclass
+class LoadMuBatchTarget(LoadInstruction):
+    pass
 
 
 class Schedule(ABC):
@@ -59,52 +121,38 @@ class Schedule(ABC):
         return 0 <= stage_id < self.num_stages
 
 
-class DataParallelSchedule(Schedule):
+class NaiveParallelSchedule(Schedule):
     """
-    A pure data parallel schedule, without any proper pipeline parallelism
+    A pipeline schedule without any interleaving of μBatches.
+    Only one pipeline stage is activate at any given time
     """
 
     def steps(self):
-        # naive pipeline parallel, hence we only need two buffers
-        yield [(PipeInstr.ZeroGrad, {})]
-
+        yield [ZeroGrad()]
         for mubatch_id in range(self.num_micro_batches):
-            cmds = []
+            yield self.steps_mubatch(mubatch_id)
+        # updating the weights is the last step of processing a batch
+        yield [OptimizerStep()]
 
-            if self.is_first_stage:
-                cmds.append(
-                    (
-                        PipeInstr.LoadMicroBatchInput,
-                        {"mubatch_id": mubatch_id, "buffer_idx": 0},
-                    )
-                )
-            else:
-                cmds.append((PipeInstr.RecvActivations, {"buffer_idx": 0}))
-
-            cmds.append((PipeInstr.Forward, {"buffer_idx": 0}))
-
-            if self.is_last_stage:
-                cmds.append(
-                    (
-                        PipeInstr.LoadMicroBatchTarget,
-                        {"mubatch_id": mubatch_id, "buffer_idx": 0},
-                    )
-                )
-            else:
-                cmds.append((PipeInstr.SendActivations, {"buffer_idx": 0}))
-                cmds.append((PipeInstr.ReceiveOutputGrad, {"buffer_idx": 0}))
-
-            if mubatch_id == self.num_micro_batches - 1:
-                cmds.append((PipeInstr.BackwardGradAllReduce, {"buffer_idx": 0}))
-            else:
-                cmds.append((PipeInstr.BackwardGradAccumulate, {"buffer_idx": 0}))
-
-            if not self.is_first_stage:
-                cmds.append((PipeInstr.SendInputGrad, {"buffer_idx": 0}))
-
-            if mubatch_id == self.num_micro_batches - 1:
-                cmds.append((PipeInstr.OptimizerStep, {}))
-            yield cmds
+    def steps_mubatch(self, mubatch_id):
+        cmds = []
+        if self.is_first_stage:
+            cmds.append(LoadMuBatchInput(mubatch_id=mubatch_id, buffer_id=0))
+        else:
+            cmds.append((RecvActivations(buffer_id=0)))
+        cmds.append(Forward(buffer_id=0, mubatch_id=mubatch_id))
+        if self.is_last_stage:
+            cmds.append(LoadMuBatchTarget(mubatch_id=mubatch_id, buffer_id=0))
+        else:
+            cmds.append(SendActivations(buffer_id=0))
+            cmds.append(RecvOutputGrad(buffer_id=0))
+        if mubatch_id == self.num_micro_batches - 1:
+            cmds.append(BackwardGradAllReduce(buffer_id=0, mubatch_id=mubatch_id))
+        else:
+            cmds.append(BackwardGradAcc(buffer_id=0, mubatch_id=mubatch_id))
+        if not self.is_first_stage:
+            cmds.append(SendInputGrad(buffer_id=0))
+        return cmds
 
     @property
     def num_buffers(self):
@@ -114,36 +162,96 @@ class DataParallelSchedule(Schedule):
         return 2
 
 
+class GPipeSchedule(Schedule):
+    def steps(self):
+        yield [(PipeInstr.ZeroGrad, {})]
+
+        # STAGE 1: FWD all μBatches
+        for mubatch_id in range(self.num_micro_batches):
+            yield self.steps_FWD_mubatch(mubatch_id)
+
+        # STAGE 2: BWD all μBatches
+        for mubatch_id in reversed(range(self.num_micro_batches)):
+            yield from self.steps_BWD_mubatch(mubatch_id)
+
+        # updating the weights is the last step of processing any batch
+        yield [(PipeInstr.OptimizerStep, {})]
+
+    def steps_BWD_mubatch(self, mubatch_id):
+        cmds = []
+        if self.is_last_stage:
+            cmds.append(
+                (
+                    PipeInstr.LoadMuBatchTarget,
+                    {"mubatch_id": mubatch_id, "buf_idx": 0},
+                )
+            )
+        else:
+            cmds.append((PipeInstr.ReceiveOutputGrad, {"buf_idx": 0}))
+        if mubatch_id == 0:
+            # interleaved backprop & AllReduce during last μBatch
+            cmds.append(
+                (
+                    PipeInstr.BackwardGradAllReduce,
+                    {"buf_idx": 0, "mubatch_idx": mubatch_id},
+                )
+            )
+        else:
+            cmds.append(
+                (
+                    PipeInstr.BackwardGradAccumulate,
+                    {"buf_idx": 0, "mubatch_idx": mubatch_id},
+                )
+            )
+        if not self.is_first_stage:
+            cmds.append((PipeInstr.SendInputGrad, {"buf_idx": 0}))
+        yield cmds
+
+    def steps_FWD_mubatch(self, mubatch_id):
+        cmds = []
+        if self.is_first_stage:
+            cmds.append(
+                (
+                    PipeInstr.LoadMuBatchInput,
+                    {"mubatch_id": mubatch_id, "buf_idx": 0},
+                )
+            )
+        else:
+            cmds.append((PipeInstr.RecvActivations, {"buf_idx": 0}))
+        cmds.append((PipeInstr.Forward, {"buf_idx": 0, "mubatch_idx": mubatch_id}))
+        # the last stage just discards the output of its `forward()` pass since
+        # it's not necessary for running BWD. The last stage just needs the target values
+        # (loaded from disk) and the activations (cached inside the `Module`'s) for BWD.
+        if not self.is_last_stage:
+            cmds.append((PipeInstr.SendActivations, {"buf_idx": 0}))
+        return cmds
+
+    @property
+    def num_buffers(self):
+        # could keep more buffers around and make the sending & receiving async
+        return 2
+
+
 class InferenceSchedule(Schedule):
     def steps(self):
         for mubatch_id in range(self.num_micro_batches):
             cmds = []
 
             if self.is_first_stage:
-                cmds.append(
-                    (
-                        PipeInstr.LoadMicroBatchInput,
-                        {"mubatch_id": mubatch_id, "buffer_idx": 0},
-                    )
-                )
+                cmds.append(LoadMuBatchInput(mubatch_id=mubatch_id, buffer_id=0))
             else:
-                cmds.append((PipeInstr.RecvActivations, {"buffer_idx": 0}))
+                cmds.append(RecvActivations(buffer_id=0))
 
-            cmds.append((PipeInstr.Forward, {"buffer_idx": 0}))
+            cmds.append(Forward(buffer_id=0, mubatch_id=mubatch_id))
 
             if not self.is_last_stage:
-                cmds.append((PipeInstr.SendActivations, {"buffer_idx": 0}))
+                cmds.append(SendActivations(buffer_id=0))
             yield cmds
 
     @property
     def num_buffers(self):
         # Could be done with 1 buffer (by doing the FWD inplace)
         return 2
-
-
-class GPipeSchedule:
-    def __init__(self):
-        pass
 
 
 class PipeDreamSchedule:
@@ -204,6 +312,85 @@ class Worker:
         self.dataset = dataset
         self.optimizer = optimizer
 
+    def load_micro_batch_input(self, batch_id, mubatch_id, buffer_id):
+        data = self.dataset.load_micro_batch_input(batch_id, mubatch_id)
+        assert (
+            data.shape == self.input_buffers[buffer_id].shape
+        ), f"shape is {data.shape} but should be {self.input_buffers[buffer_id].shape}"
+        self.input_buffers[buffer_id] = data
+
+    def load_micro_batch_target(self, batch_id, mubatch_id, buffer_id):
+        data = self.dataset.load_micro_batch_target(batch_id, mubatch_id)
+        assert self.output_buffers[buffer_id].shape == data.shape
+        self.output_buffers[buffer_id] = data
+
+    def send_activations(self, buffer_id):
+        # send forwards
+        self.pp_comm.Send(self.output_buffers[buffer_id], self.get_successor())
+
+    def recv_activations(self, buffer_id):
+        # receive from previous
+        self.pp_comm.Recv(self.input_buffers[buffer_id], self.get_predecessor())
+
+    def send_grad(self, buffer_id):
+        # send backwards
+        self.pp_comm.Send(self.input_buffers[buffer_id], self.get_predecessor())
+
+    def recv_grad(self, buffer_id):
+        # receive from next
+        self.pp_comm.Recv(self.output_buffers[buffer_id], self.get_successor())
+
+    def forward(self, buffer_id, mubatch_id):
+        # FWD pass transforms input buffer into output buffer
+        self.output_buffers[buffer_id] = self.model.forward(
+            inputs=self.input_buffers[buffer_id], mubatch_id=mubatch_id
+        )
+
+    def backward_and_reduce(self, buffer_id, mubatch_id):
+        # hooks for AllReducing-ing the gradient across all dp_workers
+        self.model.register_grad_hook(
+            lambda param: backprop_allreduce_gradient(self.dp_comm, param)
+        )
+        self.model.register_post_grad_hook(backprop_block_for_comms)
+
+        # regular backwards pass will trigger the AR hooks
+        self.backward_accumulate(buffer_id, mubatch_id=mubatch_id)
+
+        self.model.reset_grad_hooks()
+        self.model.reset_post_grad_hooks()
+
+    def backward_accumulate(self, buffer_id, mubatch_id):
+        # BWD pass transforms output buffer into input buffer
+        self.input_buffers[buffer_id] = self.model.backward(
+            dout=self.output_buffers[buffer_id], mubatch_id=mubatch_id
+        )
+
+    def optimizer_step(self):
+        self.optimizer.step()
+
+    def zero_grad(self):
+        self.model.zero_grad()
+
+    def get_predecessor(self):
+        return self.stage_id - 1
+
+    def get_successor(self):
+        return self.stage_id + 1
+
+    _INSTRUCTION_MAP = {
+        LoadMuBatchInput: load_micro_batch_input,
+        LoadMuBatchTarget: load_micro_batch_target,
+        Forward: forward,
+        BackwardGradAllReduce: backward_and_reduce,
+        BackwardGradAcc: backward_accumulate,
+        OptimizerStep: optimizer_step,
+        ZeroGrad: zero_grad,
+        RecvActivations: recv_activations,
+        SendActivations: send_activations,
+        RecvOutputGrad: recv_grad,
+        SendInputGrad: send_grad,
+    }
+
     def execute(self, sched, batch_id):
         """
         Setup buffers and use the configured schedule to execute a full batch
@@ -227,100 +414,12 @@ class Worker:
         ]
 
         for commands in sched.steps():
-            for command, kwargs in commands:
-                match command:
-                    case PipeInstr.LoadMicroBatchInput:
-                        self.load_micro_batch_input(batch_id, **kwargs)
-                    case PipeInstr.LoadMicroBatchTarget:
-                        self.load_micro_batch_target(batch_id, **kwargs)
-                    case PipeInstr.Forward:
-                        self.forward(**kwargs)
-                    case PipeInstr.BackwardGradAllReduce:
-                        self.backward_and_reduce(**kwargs)
-                    case PipeInstr.BackwardGradAccumulate:
-                        self.backward_accumulate(**kwargs)
-                    case PipeInstr.OptimizerStep:
-                        self.optimizer_step()
-                    case PipeInstr.ZeroGrad:
-                        self.zero_grad()
-                    case PipeInstr.RecvActivations:
-                        self.recv_activations(
-                            from_idx=self.get_predecessor(sched), **kwargs
-                        )
-                    case PipeInstr.SendActivations:
-                        self.send_activations(
-                            to_idx=self.get_successor(sched), **kwargs
-                        )
-                    case PipeInstr.ReceiveOutputGrad:
-                        self.recv_grad(from_idx=self.get_successor(sched), **kwargs)
-                    case PipeInstr.SendInputGrad:
-                        self.send_grad(to_idx=self.get_predecessor(sched), **kwargs)
-                    case _:
-                        raise NotImplementedError(command)
-
-    def load_micro_batch_input(self, batch_id, mubatch_id, buffer_idx):
-        data = self.dataset.load_micro_batch_input(batch_id, mubatch_id)
-        assert data.shape == self.input_buffers[buffer_idx].shape
-        self.input_buffers[buffer_idx] = data
-
-    def load_micro_batch_target(self, batch_id, mubatch_id, buffer_idx):
-        data = self.dataset.load_micro_batch_target(batch_id, mubatch_id)
-        assert self.output_buffers[buffer_idx].shape == data.shape
-        self.output_buffers[buffer_idx] = data
-
-    def get_predecessor(self, schedule):
-        pred = self.stage_id - 1
-        assert schedule.is_valid_stage_id(pred)
-        return pred
-
-    def get_successor(self, schedule):
-        succ = self.stage_id + 1
-        assert schedule.is_valid_stage_id(succ)
-        return succ
-
-    def send_activations(self, to_idx, buffer_idx):
-        # send forwards
-        self.pp_comm.Send(self.output_buffers[buffer_idx], to_idx)
-
-    def recv_activations(self, from_idx, buffer_idx):
-        # receive from previous
-        self.pp_comm.Recv(self.input_buffers[buffer_idx], from_idx)
-
-    def send_grad(self, to_idx, buffer_idx):
-        # send backwards
-        self.pp_comm.Send(self.input_buffers[buffer_idx], to_idx)
-
-    def recv_grad(self, from_idx, buffer_idx):
-        # receive from next
-        self.pp_comm.Recv(self.output_buffers[buffer_idx], from_idx)
-
-    def forward(self, buffer_idx):
-        # FWD pass transforms input buffer into output buffer
-        self.output_buffers[buffer_idx] = self.model.forward(
-            self.input_buffers[buffer_idx]
-        )
-
-    def backward_and_reduce(self, buffer_idx):
-        # hooks for AllReducing-ing the gradient across all dp_workers
-        self.model.register_grad_hook(
-            lambda param: backprop_allreduce_gradient(self.dp_comm, param)
-        )
-        self.model.register_post_grad_hook(backprop_block_for_comms)
-
-        # regular backwards pass will trigger the AR hooks
-        self.backward_accumulate(buffer_idx)
-
-        self.model.reset_grad_hooks()
-        self.model.reset_post_grad_hooks()
-
-    def backward_accumulate(self, buffer_idx):
-        # BWD pass transforms output buffer into input buffer
-        self.input_buffers[buffer_idx] = self.model.backward(
-            self.output_buffers[buffer_idx]
-        )
-
-    def optimizer_step(self):
-        self.optimizer.step()
-
-    def zero_grad(self):
-        self.model.zero_grad()
+            for command in commands:
+                if isinstance(command, LoadInstruction):
+                    self._INSTRUCTION_MAP[type(command)](
+                        self, batch_id, **dataclasses.asdict(command)
+                    )
+                else:
+                    self._INSTRUCTION_MAP[type(command)](
+                        self, **dataclasses.asdict(command)
+                    )
