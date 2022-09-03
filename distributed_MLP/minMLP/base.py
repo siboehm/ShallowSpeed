@@ -47,7 +47,7 @@ class Module(ABC):
 
     def zero_grad(self):
         for param in self.parameters():
-            param.grad = param.grad * 0
+            param.grad.fill(0.0)
 
     def parameters(self):
         return list(self._params.values())
