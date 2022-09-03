@@ -32,6 +32,7 @@ def compute_accuracy(model, x_val, y_val):
 EPOCHS = 10
 # We use a big batch size, to make training more amenable to parallelization
 GLOBAL_BATCH_SIZE = 128
+N_MUBATCHES = 1
 
 
 if __name__ == "__main__":
@@ -61,19 +62,18 @@ if __name__ == "__main__":
     ]
     layers.append(Linear(layer_sizes[-2], layer_sizes[-1]))
     layers.append(Softmax())
-    layers.append(MSELoss(rescale_factor=dp_comm.size))
+    layers.append(MSELoss(batch_size=GLOBAL_BATCH_SIZE))
 
     model = Sequential(layers)
     model.train()
 
-    # batch size is huge, so we can use a big learning rate
-    optimizer = SGD(model.parameters(), lr=0.1)
+    optimizer = SGD(model.parameters(), lr=0.01)
 
     # Each DP-worker gets a slice of the global batch-size
-    # TODO no minibatches yet
     # TODO not every worker needs the dataset
     assert GLOBAL_BATCH_SIZE % DP_tile_factor == 0
-    dataset = Dataset(save_dir, GLOBAL_BATCH_SIZE // DP_tile_factor)
+    batch_size = GLOBAL_BATCH_SIZE // DP_tile_factor
+    dataset = Dataset(save_dir, batch_size, batch_size // N_MUBATCHES)
     dataset.load(dp_comm.Get_rank(), dp_comm.Get_size())
     worker = Worker(dp_comm, pp_comm, model, dataset, optimizer)
 
@@ -86,12 +86,10 @@ if __name__ == "__main__":
             ),
         )
         for batch_id in range(0, dataset.get_num_batches()):
-            # reset gradient state between batches
-            # Todo this is probably not the correct place to do this
-            model.zero_grad()
-
             schedule = DataParallelSchedule(
-                num_micro_batches=1, num_stages=pp_comm.size, stage_id=pp_comm.rank
+                num_micro_batches=N_MUBATCHES,
+                num_stages=pp_comm.size,
+                stage_id=pp_comm.rank,
             )
             # do the actual work
             worker.execute(schedule, batch_id)

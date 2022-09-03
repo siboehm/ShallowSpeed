@@ -8,15 +8,17 @@ from minMLP.models import Sequential
 
 
 class PipelineInstruction(Enum):
+    ZeroGrad = 0
     Forward = 1
-    Backward = 2
-    BackwardAndReduce = 3
+    BackwardGradAccumulate = 2
+    BackwardGradReduce = 3
     LoadMicroBatch = 4
     OptimizerStep = 5
 
 
 class Schedule(ABC):
     def __init__(self, num_micro_batches, num_stages, stage_id):
+        assert stage_id < num_stages
         self.num_stages = num_stages
         self.stage_id = stage_id
         self.num_micro_batches = num_micro_batches
@@ -36,17 +38,18 @@ class DataParallelSchedule(Schedule):
     """
 
     def steps(self):
+        yield [(PipelineInstruction.ZeroGrad, {})]
         for microbatch_id in range(self.num_micro_batches):
             cmds = [
-                PipelineInstruction.LoadMicroBatch,
-                PipelineInstruction.Forward,
+                (PipelineInstruction.LoadMicroBatch, {"micro_batch_id": microbatch_id}),
+                (PipelineInstruction.Forward, {}),
             ]
             if microbatch_id == self.num_micro_batches - 1:
-                cmds.append(PipelineInstruction.BackwardAndReduce)
+                cmds.append((PipelineInstruction.BackwardGradReduce, {}))
             else:
-                cmds.append(PipelineInstruction.Backward)
+                cmds.append((PipelineInstruction.BackwardGradAccumulate, {}))
 
-            cmds.append(PipelineInstruction.OptimizerStep)
+            cmds.append((PipelineInstruction.OptimizerStep, {}))
             yield cmds
 
 
@@ -64,9 +67,11 @@ class Dataset:
     x_train = None
     y_train = None
 
-    def __init__(self, save_dir, batch_size):
+    def __init__(self, save_dir, batch_size, mubatch_size):
+        assert batch_size % mubatch_size == 0, "μBatchsize must divide batchsize!"
         self.save_dir = save_dir
         self.batch_size = batch_size
+        self.mubatch_size = mubatch_size
 
     def load(self, rank, size):
         # each process loads the whole dataset
@@ -83,18 +88,20 @@ class Dataset:
     def __len__(self):
         return len(self.x_train)
 
-    def load_batch(self, batch_id):
+    def load_micro_batch(self, batch_id, micro_batch_id):
         assert batch_id < self.get_num_batches()
+        assert micro_batch_id < self.get_num_mubatches()
 
-        start_idx = batch_id * self.batch_size
-        end_idx = min(len(self.x_train), batch_id * self.batch_size + self.batch_size)
+        start_idx = batch_id * self.batch_size + micro_batch_id * self.mubatch_size
+        end_idx = min(len(self.x_train), start_idx + self.mubatch_size)
 
-        x = self.x_train[start_idx:end_idx]
-        y = self.y_train[start_idx:end_idx]
-        return x, y
+        return self.x_train[start_idx:end_idx], self.y_train[start_idx:end_idx]
 
     def get_num_batches(self):
-        return len(self.x_train) // self.batch_size
+        return len(self) // self.batch_size
+
+    def get_num_mubatches(self):
+        return self.batch_size // self.mubatch_size
 
 
 def backprop_allreduce_gradient(comm, param):
@@ -151,36 +158,51 @@ class Worker:
         tells it to do
         """
         for commands in schedule.steps():
-            for command in commands:
-                Worker.INSTR_MAP[command](self, batch_id=batch_id)
+            for command, kwargs in commands:
+                match command:
+                    case PipelineInstruction.LoadMicroBatch:
+                        self.load_micro_batch(batch_id, **kwargs)
+                    case PipelineInstruction.Forward:
+                        self.forward()
+                    case PipelineInstruction.BackwardGradReduce:
+                        self.backward_and_reduce()
+                    case PipelineInstruction.BackwardGradAccumulate:
+                        self.backward_accumulate()
+                    case PipelineInstruction.OptimizerStep:
+                        self.optimizer_step()
+                    case PipelineInstruction.ZeroGrad:
+                        self.zero_grad()
+                    case _:
+                        raise NotImplementedError(command)
 
-    def load_micro_batch(self, **kwargs):
-        self.inputs_fw, self.inputs_bw = self.dataset.load_batch(kwargs["batch_id"])
+    def load_micro_batch(self, batch_id, micro_batch_id):
+        self.inputs_fw, self.inputs_bw = self.dataset.load_micro_batch(batch_id, micro_batch_id)
 
-    def forward(self, **kwargs):
+    def forward(self):
         self.outputs_fw = self.model.forward(self.inputs_fw)
 
-    def backward_and_reduce(self, **kwargs):
+    def backward_and_reduce(self):
         # hooks for AllReducing-ing the gradient across all dp_workers
         self.model.register_grad_hook(
-            "allreduce", lambda param: backprop_allreduce_gradient(self.dp_comm, param)
+            lambda param: backprop_allreduce_gradient(self.dp_comm, param)
         )
-        self.model.register_post_grad_hook("block", backprop_block_for_comms)
+        self.model.register_post_grad_hook(backprop_block_for_comms)
 
+        # regular backwards pass will trigger the AR hooks
         self.outputs_bw = self.model.backward(self.inputs_bw)
 
-        self.model.unregister_grad_hook("allreduce")
-        self.model.unregister_post_grad_hook("block")
+        self.model.reset_grad_hooks()
+        self.model.reset_post_grad_hooks()
 
-    def optimizer_step(self, **kwargs):
+    def backward_accumulate(self):
+        self.outputs_bw = self.model.backward(self.inputs_bw)
+
+    def optimizer_step(self):
         self.optimizer.step()
 
-    INSTR_MAP = {
-        PipelineInstruction.LoadMicroBatch: load_micro_batch,
-        PipelineInstruction.Forward: forward,
-        PipelineInstruction.BackwardAndReduce: backward_and_reduce,
-        PipelineInstruction.OptimizerStep: optimizer_step,
-    }
+    def zero_grad(self):
+        self.model.zero_grad()
 
     def _is_last_stage(self):
         return self.stage_id == self.pipeline_depth - 1
+

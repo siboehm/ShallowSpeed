@@ -35,10 +35,10 @@ def softmax_grad(grad_output, input):
     return new_grad - output * new_grad.sum(axis=-1, keepdims=True)
 
 
-def mse_loss(input, target):
+def mse_loss(input, target, batch_size: int):
     assert input.shape == target.shape
-    return ((target - input) ** 2).sum() / input.size
+    return ((target - input) ** 2).sum() / batch_size
 
 
-def mse_loss_grad(input, target):
-    return -2 * (target - input) / input.size
+def mse_loss_grad(input, target, batch_size: int):
+    return -2 * (target - input) / batch_size

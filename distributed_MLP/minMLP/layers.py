@@ -67,9 +67,9 @@ class Linear(Module):
 
 
 class MSELoss(Module):
-    def __init__(self, rescale_factor: int):
+    def __init__(self, batch_size: int):
         super().__init__()
-        self.rescale_factor = rescale_factor
+        self.batch_size = batch_size
 
     # You don't need to calculate the loss to compute the gradient
     # so we just don't do it
@@ -80,10 +80,9 @@ class MSELoss(Module):
 
     def backward(self, target):
         assert self._training
-        dout = mse_loss_grad(self._cache["input"], target)
+        dout = mse_loss_grad(self._cache["input"], target, self.batch_size)
         del self._cache["input"]
-        # rescale the gradient to account for the average-ing in the loss
-        return dout / self.rescale_factor
+        return dout
 
 
 class NonLinearLayer(Module):
