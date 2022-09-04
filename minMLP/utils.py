@@ -1,6 +1,5 @@
 from hashlib import sha1
 
-import torch
 from mpi4py import MPI
 
 from minMLP.base import Parameter
@@ -16,8 +15,6 @@ def get_model_hash(model):
     # not straightforward to get a deterministic, content-based hash of a model's parameters
     hash_str = ""
     for param in model.parameters():
-        if torch.is_tensor(param):
-            param = param.data.cpu().numpy()
         if isinstance(param, Parameter):
             param = param.data
 

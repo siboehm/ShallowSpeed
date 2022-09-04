@@ -8,9 +8,7 @@ dependencies:
   - scikit-learn
   - matplotlib
   - numpy
-  - pytorch
   - jupyter
-  - torchvision
   - pyarrow
   - pytest
   - pytest-mpi

@@ -1,9 +1,14 @@
+"""
+This is a self-contained example of non-interleaved data parallel training
+using PyTorch and MPI.
+"""
+
 import time
+from hashlib import sha1
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from minMLP.utils import assert_sync, get_model_hash, rprint
 from mpi4py import MPI
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
@@ -26,6 +31,30 @@ class MLP(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+
+
+def get_model_hash(model):
+    # this is probably not the most efficient way to do this, but it's
+    # not straightforward to get a deterministic, content-based hash of a model's parameters
+    hash_str = ""
+    for param in model.parameters():
+        numpy_param = param.data.cpu().numpy()
+        # concat the strings to form a single hash later
+        hash_str += sha1(numpy_param).hexdigest()
+    # hash to concatenated strings
+    return sha1(hash_str.encode("utf-8")).hexdigest()
+
+
+def rprint(*args, **kwargs):
+    if MPI.COMM_WORLD.Get_rank() == 0:
+        print(*args, **kwargs)
+
+
+def assert_sync(model_hash):
+    # check that all processes have the same model hash
+    model_hash_all = comm.gather(model_hash, root=0)
+    if MPI.COMM_WORLD.rank == 0 and len(set(model_hash_all)) > 1:
+        raise ValueError("Model hash mismatch")
 
 
 NUM_EPOCHS = 5
@@ -63,7 +92,7 @@ if __name__ == "__main__":
     # define the model
     model = MLP(input_size=28 * 28, hidden_size=64, output_size=10)
     # make sure the initialization is the same on all processes
-    assert_sync(comm, get_model_hash(model))
+    assert_sync(get_model_hash(model))
 
     # define the loss function
     criterion = nn.CrossEntropyLoss()
@@ -122,7 +151,7 @@ if __name__ == "__main__":
         )
 
     # make sure the final model is the same on all processes
-    assert_sync(comm, get_model_hash(model))
+    assert_sync(get_model_hash(model))
 
     torch.save(model.state_dict(), f"data/models/model_p{size}.pkl")
 

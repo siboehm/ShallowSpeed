@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
     # Each DP-worker gets a slice of the global batch-size
     # TODO not every worker needs the dataset
-    save_dir = Path("../data/mnist_784/")
+    save_dir = Path("data/mnist_784/")
     batch_size = GLOBAL_BATCH_SIZE // DP_tile_factor
     dataset = Dataset(save_dir, batch_size, batch_size // N_MUBATCHES)
     dataset.load(dp_comm.Get_rank(), dp_comm.Get_size())
