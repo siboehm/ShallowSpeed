@@ -2,10 +2,10 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 import numpy as np
-import pandas as pd
 from mpi4py import MPI
 
-from minMLP.models import Sequential
+from minMLP.dataset import Dataset
+from minMLP.layers import Sequential
 
 
 class PipeInstr(Enum):
@@ -153,55 +153,6 @@ class GPipeSchedule:
 class PipeDreamSchedule:
     def __init__(self):
         pass
-
-
-class Dataset:
-    input_X = None
-    target_y = None
-
-    def __init__(self, save_dir, batch_size, mubatch_size, validation=False):
-        assert batch_size % mubatch_size == 0, "μBatchsize must divide batchsize!"
-        assert save_dir.is_dir(), "Download the dataset first!"
-        self.save_dir = save_dir
-        self.batch_size = batch_size
-        self.mubatch_size = mubatch_size
-        self._val = validation
-
-    def load(self, DP_rank, DP_size):
-        # each process loads the whole dataset
-        # this is inefficient for large datasets, but fine for tiny MNIST
-        suffix = "val" if self._val else "train"
-        input_X = pd.read_parquet(self.save_dir / f"x_{suffix}.parquet").to_numpy()
-        target_y = np.load(self.save_dir / f"y_{suffix}.npy")
-
-        # each DP process selects its subset of the datasets by a `rank`-offset and `size`-strides
-        # the copy() is super important, else the array is not continuous in memory
-        # which results in horrible matmul performance
-        self.input_X = input_X[DP_rank : len(input_X) : DP_size].copy()
-        self.target_y = target_y[DP_rank : len(target_y) : DP_size].copy()
-
-    def __len__(self):
-        return len(self.input_X)
-
-    def load_micro_batch_input(self, batch_id, mubatch_id):
-        assert batch_id < self.get_num_batches()
-        assert mubatch_id < self.get_num_mubatches()
-        start_idx = batch_id * self.batch_size + mubatch_id * self.mubatch_size
-        end_idx = min(len(self.input_X), start_idx + self.mubatch_size)
-        return self.input_X[start_idx:end_idx]
-
-    def load_micro_batch_target(self, batch_id, mubatch_id):
-        assert batch_id < self.get_num_batches()
-        assert mubatch_id < self.get_num_mubatches()
-        start_idx = batch_id * self.batch_size + mubatch_id * self.mubatch_size
-        end_idx = min(len(self.input_X), start_idx + self.mubatch_size)
-        return self.target_y[start_idx:end_idx]
-
-    def get_num_batches(self):
-        return len(self) // self.batch_size
-
-    def get_num_mubatches(self):
-        return self.batch_size // self.mubatch_size
 
 
 def backprop_allreduce_gradient(comm, param):
