@@ -28,8 +28,8 @@ class Module(ABC):
         self._cache = {}
         self._training = True
 
-    def __call__(self, input):
-        return self.forward(input)
+    def __call__(self, inputs):
+        return self.forward(inputs)
 
     @abstractmethod
     def forward(self, inputs: np.array):
@@ -39,8 +39,8 @@ class Module(ABC):
     def backward(self, dout: np.array):
         raise NotImplementedError
 
-    def train(self, mode=True):
-        self._training = mode
+    def train(self):
+        self._training = True
 
     def eval(self):
         self._training = False

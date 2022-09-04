@@ -12,8 +12,6 @@ from minMLP.functional import (
 )
 from numpy.random import MT19937, RandomState, SeedSequence
 
-rs = RandomState(MT19937(SeedSequence(123456789)))
-
 
 class ReLU(Module):
     def forward(self, input):
@@ -26,6 +24,9 @@ class ReLU(Module):
         dout = relu_grad(dout, self._cache["bitmask"])
         del self._cache["bitmask"]
         return dout
+
+    def __repr__(self):
+        return "ReLU()"
 
 
 class Softmax(Module):
@@ -40,21 +41,40 @@ class Softmax(Module):
         del self._cache["input"]
         return dout
 
+    def __repr__(self):
+        return "Softmax()"
+
 
 class Linear(Module):
-    def __init__(self, in_dims, out_dims):
+    def __init__(self, in_dims, out_dims, activation="relu"):
         super().__init__()
-        # should probably be scaled by 1 / sqrt(in_dims)
-        self._params["W"] = Parameter(rs.uniform(-0.1, 0.1, (out_dims, in_dims)))
+        assert activation is None or activation == "relu"
+
+        # we want to get the same initial weights, no matter
+        # if the model is distributed across workers or not
+        rs = RandomState(MT19937(SeedSequence(in_dims + out_dims * 1337)))
+
+        self.activation = ReLU() if activation == "relu" else None
+        self._params["W"] = Parameter(
+            rs.normal(0.0, 1.0, (out_dims, in_dims)) / np.sqrt(in_dims)
+        )
         self._params["b"] = Parameter(np.zeros((1, out_dims)))
 
     def forward(self, input):
         if self._training:
             self._cache["input"] = input
-        return linear(input, self._params["W"].data, self._params["b"].data)
+        result = linear(input, self._params["W"].data, self._params["b"].data)
+
+        if self.activation:
+            return self.activation(result)
+        return result
 
     def backward(self, dout):
         assert self._training
+
+        if self.activation:
+            dout = self.activation.backward(dout)
+
         dout, dW, db = linear_grad(dout, self._cache["input"], self._params["W"].data)
 
         # accumulate gradients
@@ -63,6 +83,9 @@ class Linear(Module):
 
         del self._cache["input"]
         return dout
+
+    def __repr__(self):
+        return f"Linear({self._params['W'].data.shape[1]}->{self._params['W'].data.shape[0]}, act: {self.activation})"
 
 
 class MSELoss(Module):
@@ -83,16 +106,5 @@ class MSELoss(Module):
         del self._cache["input"]
         return dout
 
-
-class NonLinearLayer(Module):
-    def __init__(self, in_dims, out_dims):
-        super().__init__()
-        self.linear = Linear(in_dims, out_dims)
-        self.relu = ReLU()
-        self._params = self.linear._params
-
-    def forward(self, inputs):
-        return self.relu(self.linear(inputs))
-
-    def backward(self, dout):
-        return self.linear.backward(self.relu.backward(dout))
+    def __repr__(self):
+        return f"MSELoss()"
