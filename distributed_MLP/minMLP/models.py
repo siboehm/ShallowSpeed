@@ -1,6 +1,5 @@
 from minMLP.base import Module
-from minMLP.layers import Linear, NonLinearLayer, Softmax
-from mpi4py import MPI
+from minMLP.layers import Linear, MSELoss, Softmax
 
 
 class Sequential(Module):
@@ -49,10 +48,10 @@ class Sequential(Module):
 
         return result
 
-    def train(self, mode=True):
-        self._training = mode
+    def train(self):
+        self._training = True
         for l in self.layers:
-            l.train(mode)
+            l.train()
 
     def eval(self):
         self._training = False
@@ -68,3 +67,30 @@ class Sequential(Module):
         for l in self.layers:
             result += l.parameters()
         return result
+
+
+class MLP(Sequential):
+    def __init__(self, sizes: list[int], stage_idx, n_stages, batch_size):
+        assert len(sizes) % n_stages == 0
+        stage_size = len(sizes) // n_stages
+
+        is_last_stage = stage_idx == n_stages - 1
+        layers = [
+            Linear(
+                sizes[i],
+                sizes[i + 1],
+                activation=None if i == len(sizes) - 2 and is_last_stage else "relu",
+            )
+            for i in range(
+                stage_size * stage_idx,
+                min(len(sizes) - 1, stage_size * stage_idx + stage_size),
+            )
+        ]
+        if is_last_stage:
+            layers.append(Softmax())
+            layers.append(MSELoss(batch_size=batch_size))
+        super().__init__(layers)
+
+        print(layers)
+
+        self.in_dim = sizes[stage_size * stage_idx]

@@ -1,16 +1,19 @@
 import numpy as np
 from minMLP.functional import mse_loss_grad
-from minMLP.layers import Linear, NonLinearLayer, Softmax
+from minMLP.layers import Linear, Softmax
 from minMLP.models import Sequential
 
 
 def test_MLP_basic():
     layer_sizes = [132, 40, 11, 9]
     layers = [
-        NonLinearLayer(layer_sizes[i], layer_sizes[i + 1])
-        for i in range(len(layer_sizes) - 2)
+        Linear(
+            layer_sizes[i],
+            layer_sizes[i + 1],
+            activation="relu" if i < len(layer_sizes) - 2 else None,
+        )
+        for i in range(len(layer_sizes) - 1)
     ]
-    layers.append(Linear(layer_sizes[-2], layer_sizes[-1]))
     layers.append(Softmax())
     dnn = Sequential(layers)
     assert len(dnn.parameters()) == 6
