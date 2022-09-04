@@ -31,8 +31,10 @@ class Dataset:
         # each process loads the whole dataset
         # this is inefficient for large datasets, but fine for tiny MNIST
         suffix = "val" if self._val else "train"
-        input_X = pd.read_parquet(self.save_dir / f"x_{suffix}.parquet").to_numpy()
-        target_y = np.load(self.save_dir / f"y_{suffix}.npy")
+        input_X = pd.read_parquet(self.save_dir / f"x_{suffix}.parquet").to_numpy(
+            dtype=np.float32
+        )
+        target_y = np.load(self.save_dir / f"y_{suffix}.npy").astype(np.float32)
         assert len(input_X) == len(target_y)
 
         # drop last few samples such that each batch is exactly `global_batch_size` long
@@ -55,14 +57,16 @@ class Dataset:
         assert batch_id < self.get_num_batches()
         assert mubatch_id < self.get_num_mubatches()
         start_idx = batch_id * self.local_batch_size + mubatch_id * self.mubatch_size
-        end_idx = min(len(self.input_X), start_idx + self.mubatch_size)
+        end_idx = start_idx + self.mubatch_size
+        assert end_idx <= len(self.input_X)
         return self.input_X[start_idx:end_idx]
 
     def load_micro_batch_target(self, batch_id, mubatch_id):
         assert batch_id < self.get_num_batches()
         assert mubatch_id < self.get_num_mubatches()
         start_idx = batch_id * self.local_batch_size + mubatch_id * self.mubatch_size
-        end_idx = min(len(self.input_X), start_idx + self.mubatch_size)
+        end_idx = start_idx + self.mubatch_size
+        assert end_idx <= len(self.input_X)
         return self.target_y[start_idx:end_idx]
 
     def get_num_batches(self):

@@ -15,3 +15,4 @@ def test_dataset():
     num_sample_no_tile_quantization = num_sample - (num_sample % 128)
     dataset.load(DP_rank=1, DP_size=4)
     assert len(dataset) == num_sample_no_tile_quantization // 4
+    assert dataset.load_micro_batch_input(0, 0).dtype == np.float32

@@ -10,7 +10,7 @@ class Parameter(ABC):
 
     def __init__(self, data: np.array, requires_grad: bool = True):
         self.data = data
-        self.grad = np.zeros_like(data)
+        self.grad = np.zeros_like(data, dtype=np.float32)
         self.requires_grad = requires_grad
 
     def __repr__(self):

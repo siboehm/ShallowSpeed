@@ -31,7 +31,7 @@ def compute_accuracy(model, worker, dataset):
         worker.execute(schedule, batch_id)
 
         if worker.stage_id == worker.pipeline_depth - 1:
-            pred = np.argmax(worker.buffers[1], axis=-1)
+            pred = np.argmax(worker.output_buffers[0], axis=-1)
             target = np.argmax(dataset.load_micro_batch_target(batch_id, 0), axis=-1)
             correct += np.sum(pred == target)
             total += pred.shape[0]
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--pp", type=int, default=1, help="Number of pipeline stages")
     parser.add_argument(
-        "--schedule", type=str, choices=["PipeDream", "naive"], default="naive"
+        "--schedule", type=str, choices=["pipedream", "naive"], default="naive"
     )
     args = parser.parse_args()
     DP_tile_factor = args.dp
@@ -66,7 +66,7 @@ if __name__ == "__main__":
     assert DP_tile_factor >= 1 and PP_tile_factor >= 1
     assert DP_tile_factor * PP_tile_factor == MPI.COMM_WORLD.size, (
         f"Number of started workers is {MPI.COMM_WORLD.size}, "
-        f"but number of required workers is {DP_tile_factor * PP_tile_factor} (DP * PP)"
+        f"but should be {DP_tile_factor * PP_tile_factor} (DP * PP)"
     )
     assert (
         GLOBAL_BATCH_SIZE % DP_tile_factor == 0
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     model = MLP(
         layer_sizes,
         stage_idx=pp_comm.rank,
-        n_stages=pp_comm.size,
+        n_stages=PP_tile_factor,
         batch_size=GLOBAL_BATCH_SIZE,
     )
     model.train()

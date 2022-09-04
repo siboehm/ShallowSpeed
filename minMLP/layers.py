@@ -56,9 +56,10 @@ class Linear(Module):
 
         self.activation = ReLU() if activation == "relu" else None
         self._params["W"] = Parameter(
-            rs.normal(0.0, 1.0, (out_dims, in_dims)) / np.sqrt(in_dims)
+            rs.normal(0.0, 1.0, (out_dims, in_dims)).astype(np.float32)
+            / np.sqrt(in_dims)
         )
-        self._params["b"] = Parameter(np.zeros((1, out_dims)))
+        self._params["b"] = Parameter(np.zeros((1, out_dims), dtype=np.float32))
 
     def forward(self, input):
         if self._training:
@@ -179,20 +180,28 @@ class Sequential(Module):
 
 class MLP(Sequential):
     def __init__(self, sizes: list[int], stage_idx, n_stages, batch_size):
+        """
+        :param batch_size: The total batch size. This is necessary for rescaling the
+            loss while operating on DP-slices & μBatches
+        """
         assert len(sizes) % n_stages == 0
         stage_size = len(sizes) // n_stages
 
+        # construct & init local layers
         is_last_stage = stage_idx == n_stages - 1
+        local_sizes = sizes[
+            stage_idx
+            * stage_size : min(len(sizes), stage_size * stage_idx + stage_size + 1)
+        ]
         layers = [
             Linear(
-                sizes[i],
-                sizes[i + 1],
-                activation=None if i == len(sizes) - 2 and is_last_stage else "relu",
+                local_sizes[i],
+                local_sizes[i + 1],
+                activation=None
+                if i == len(local_sizes) - 2 and is_last_stage
+                else "relu",
             )
-            for i in range(
-                stage_size * stage_idx,
-                min(len(sizes) - 1, stage_size * stage_idx + stage_size),
-            )
+            for i in range(len(local_sizes) - 1)
         ]
         if is_last_stage:
             layers.append(Softmax())
@@ -201,4 +210,6 @@ class MLP(Sequential):
 
         print(layers)
 
-        self.in_dim = sizes[stage_size * stage_idx]
+        self.in_dim = local_sizes[0]
+        # softmax & losses don't change output dimensions
+        self.out_dim = local_sizes[-1]
