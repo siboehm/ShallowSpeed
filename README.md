@@ -3,7 +3,7 @@
 A tiny implementation of distributed training for sequential deep learning models.
 Implemented using plain Numpy & mpi4py.
 
-![](.github/assets/title_picture.png)
+![](.github/assets/title_picture.jpg)
 
 ## Setup
 ```bash
