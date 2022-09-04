@@ -8,11 +8,11 @@ Implemented using plain Numpy & mpi4py.
 
 Currently implements:
 - Sequential models / deep MLPs, training using SGD.
-- Data parallel training w/ interleaved communication & computation, similar to PyTorch's [DistributedDataParallel](https://arxiv.org/abs/2006.15704).
+- Data parallel training with interleaved communication & computation, similar to PyTorch's [DistributedDataParallel](https://arxiv.org/abs/2006.15704).
 - Pipeline parallel training:
-  - Naive schedule w/o interleaved stages.
-  - [Gpipe](https://arxiv.org/abs/1811.06965) schedule w/ interleaved FWD & interleaved BWD.
-  - (soon) [PipeDream Flush](https://arxiv.org/abs/2006.09503) schedule w/ additional inter-FWD & BWD interleaving.
+  - Naive schedule without interleaved stages.
+  - [Gpipe](https://arxiv.org/abs/1811.06965) schedule with interleaved FWD & interleaved BWD.
+  - (soon) [PipeDream Flush](https://arxiv.org/abs/2006.09503) schedule with additional inter-FWD & BWD interleaving.
 - Any combination of DP & PP algorithms.
 
 ## Setup
