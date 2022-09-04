@@ -3,8 +3,9 @@ from enum import Enum
 
 import numpy as np
 import pandas as pd
-from minMLP.models import Sequential
 from mpi4py import MPI
+
+from minMLP.models import Sequential
 
 
 class PipeInstr(Enum):

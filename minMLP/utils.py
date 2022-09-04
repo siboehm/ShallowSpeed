@@ -1,8 +1,9 @@
 from hashlib import sha1
 
 import torch
-from minMLP.base import Parameter
 from mpi4py import MPI
+
+from minMLP.base import Parameter
 
 
 def rprint(*args, **kwargs):

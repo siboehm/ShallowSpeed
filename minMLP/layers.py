@@ -1,4 +1,6 @@
 import numpy as np
+from numpy.random import MT19937, RandomState, SeedSequence
+
 from minMLP.base import Module, Parameter
 from minMLP.functional import (
     linear,
@@ -10,7 +12,6 @@ from minMLP.functional import (
     softmax,
     softmax_grad,
 )
-from numpy.random import MT19937, RandomState, SeedSequence
 
 
 class ReLU(Module):

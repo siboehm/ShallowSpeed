@@ -2,11 +2,12 @@ import time
 from pathlib import Path
 
 import numpy as np
+from mpi4py import MPI
+
 from minMLP.models import MLP
 from minMLP.optimizer import SGD
 from minMLP.pipe import DataParallelSchedule, Dataset, InferenceSchedule, Worker
 from minMLP.utils import assert_sync, get_model_hash
-from mpi4py import MPI
 
 
 def compute_accuracy(model, worker, dataset):

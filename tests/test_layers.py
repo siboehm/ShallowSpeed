@@ -1,4 +1,5 @@
 import numpy as np
+
 from minMLP.functional import mse_loss_grad
 from minMLP.layers import Linear, Softmax
 from minMLP.models import Sequential

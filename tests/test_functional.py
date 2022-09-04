@@ -1,4 +1,5 @@
 import numpy as np
+
 from minMLP.functional import (
     linear,
     linear_grad,
