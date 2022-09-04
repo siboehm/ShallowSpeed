@@ -164,7 +164,7 @@ class NaiveParallelSchedule(Schedule):
 
 class GPipeSchedule(Schedule):
     def steps(self):
-        yield [(PipeInstr.ZeroGrad, {})]
+        yield [ZeroGrad()]
 
         # STAGE 1: FWD all μBatches
         for mubatch_id in range(self.num_micro_batches):
@@ -175,55 +175,35 @@ class GPipeSchedule(Schedule):
             yield from self.steps_BWD_mubatch(mubatch_id)
 
         # updating the weights is the last step of processing any batch
-        yield [(PipeInstr.OptimizerStep, {})]
+        yield [OptimizerStep()]
 
     def steps_BWD_mubatch(self, mubatch_id):
         cmds = []
         if self.is_last_stage:
-            cmds.append(
-                (
-                    PipeInstr.LoadMuBatchTarget,
-                    {"mubatch_id": mubatch_id, "buf_idx": 0},
-                )
-            )
+            cmds.append(LoadMuBatchTarget(mubatch_id=mubatch_id, buffer_id=0))
         else:
-            cmds.append((PipeInstr.ReceiveOutputGrad, {"buf_idx": 0}))
+            cmds.append(RecvOutputGrad(buffer_id=0))
         if mubatch_id == 0:
             # interleaved backprop & AllReduce during last μBatch
-            cmds.append(
-                (
-                    PipeInstr.BackwardGradAllReduce,
-                    {"buf_idx": 0, "mubatch_idx": mubatch_id},
-                )
-            )
+            cmds.append(BackwardGradAllReduce(buffer_id=0, mubatch_id=mubatch_id))
         else:
-            cmds.append(
-                (
-                    PipeInstr.BackwardGradAccumulate,
-                    {"buf_idx": 0, "mubatch_idx": mubatch_id},
-                )
-            )
+            cmds.append(BackwardGradAcc(buffer_id=0, mubatch_id=mubatch_id))
         if not self.is_first_stage:
-            cmds.append((PipeInstr.SendInputGrad, {"buf_idx": 0}))
+            cmds.append(SendInputGrad(buffer_id=0))
         yield cmds
 
     def steps_FWD_mubatch(self, mubatch_id):
         cmds = []
         if self.is_first_stage:
-            cmds.append(
-                (
-                    PipeInstr.LoadMuBatchInput,
-                    {"mubatch_id": mubatch_id, "buf_idx": 0},
-                )
-            )
+            cmds.append(LoadMuBatchInput(buffer_id=0, mubatch_id=mubatch_id))
         else:
-            cmds.append((PipeInstr.RecvActivations, {"buf_idx": 0}))
-        cmds.append((PipeInstr.Forward, {"buf_idx": 0, "mubatch_idx": mubatch_id}))
+            cmds.append(RecvActivations(buffer_id=0))
+        cmds.append(Forward(buffer_id=0, mubatch_id=mubatch_id))
         # the last stage just discards the output of its `forward()` pass since
         # it's not necessary for running BWD. The last stage just needs the target values
         # (loaded from disk) and the activations (cached inside the `Module`'s) for BWD.
         if not self.is_last_stage:
-            cmds.append((PipeInstr.SendActivations, {"buf_idx": 0}))
+            cmds.append(SendActivations(buffer_id=0))
         return cmds
 
     @property
