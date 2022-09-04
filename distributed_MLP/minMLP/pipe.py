@@ -7,13 +7,18 @@ from minMLP.models import Sequential
 from mpi4py import MPI
 
 
-class PipelineInstruction(Enum):
+class PipeInstr(Enum):
     ZeroGrad = 0
     Forward = 1
     BackwardGradAccumulate = 2
     BackwardGradAllReduce = 3
-    LoadMicroBatch = 4
-    OptimizerStep = 5
+    LoadMicroBatchInput = 4
+    LoadMicroBatchTarget = 5
+    OptimizerStep = 6
+    ReceiveActivations = 7
+    SendActivations = 8
+    ReceiveOutputGrad = 9
+    SendInputGrad = 10
 
 
 class Schedule(ABC):
@@ -31,6 +36,13 @@ class Schedule(ABC):
         """
         pass
 
+    @abstractmethod
+    def num_buffers(self):
+        """
+        The number of buffers necessary for sending & receiving data
+        """
+        pass
+
     @property
     def is_last_stage(self):
         return self.stage_id == self.num_stages - 1
@@ -39,6 +51,9 @@ class Schedule(ABC):
     def is_first_stage(self):
         return self.stage_id == 0
 
+    def is_valid_stage_id(self, stage_id):
+        return 0 <= stage_id < self.num_stages
+
 
 class DataParallelSchedule(Schedule):
     """
@@ -46,28 +61,87 @@ class DataParallelSchedule(Schedule):
     """
 
     def steps(self):
-        yield [(PipelineInstruction.ZeroGrad, {})]
-        for microbatch_id in range(self.num_micro_batches):
+        # naive pipeline parallel, hence we only need two buffers
+        left_buf = 0
+        right_buf = 1
+
+        yield [(PipeInstr.ZeroGrad, {})]
+
+        for mubatch_id in range(self.num_micro_batches):
             cmds = []
 
             if self.is_first_stage:
                 cmds.append(
                     (
-                        PipelineInstruction.LoadMicroBatch,
-                        {"micro_batch_id": microbatch_id},
+                        PipeInstr.LoadMicroBatchInput,
+                        {"mubatch_id": mubatch_id, "buffer_idx": left_buf},
                     )
                 )
-
-            cmds.append((PipelineInstruction.Forward, {}))
-
-            if microbatch_id == self.num_micro_batches - 1:
-                # Interleaved backprop & DP allreduce, followed by optimizer step
-                cmds.append((PipelineInstruction.BackwardGradAllReduce, {}))
-                cmds.append((PipelineInstruction.OptimizerStep, {}))
             else:
-                # Standard backprop
-                cmds.append((PipelineInstruction.BackwardGradAccumulate, {}))
+                cmds.append((PipeInstr.ReceiveActivations, {"buffer_idx": left_buf}))
+
+            cmds.append((PipeInstr.Forward, {"buffer_idx": left_buf}))
+
+            if self.is_last_stage:
+                cmds.append(
+                    (
+                        PipeInstr.LoadMicroBatchTarget,
+                        {"mubatch_id": mubatch_id, "buffer_idx": right_buf},
+                    )
+                )
+            else:
+                cmds.append((PipeInstr.SendActivations, {"buffer_idx": right_buf}))
+                cmds.append((PipeInstr.ReceiveOutputGrad, {"buffer_idx": right_buf}))
+
+            if mubatch_id == self.num_micro_batches - 1:
+                cmds.append(
+                    (PipeInstr.BackwardGradAllReduce, {"buffer_idx": right_buf})
+                )
+            else:
+                cmds.append(
+                    (PipeInstr.BackwardGradAccumulate, {"buffer_idx": right_buf})
+                )
+
+            if not self.is_first_stage:
+                cmds.append((PipeInstr.SendInputGrad, {"buffer_idx": left_buf}))
+
+            if mubatch_id == self.num_micro_batches - 1:
+                cmds.append((PipeInstr.OptimizerStep, {}))
             yield cmds
+
+    def num_buffers(self):
+        # need 1 Buffer for receiving input and 1 buffer for sending output
+        # since this is naive PP, there's only ever one μB in flight at the
+        # same time
+        return 2
+
+
+class InferenceSchedule(Schedule):
+    def steps(self):
+        left_buf = 0
+        right_buf = 1
+
+        for mubatch_id in range(self.num_micro_batches):
+            cmds = []
+
+            if self.is_first_stage:
+                cmds.append(
+                    (
+                        PipeInstr.LoadMicroBatchInput,
+                        {"mubatch_id": mubatch_id, "buffer_idx": left_buf},
+                    )
+                )
+            else:
+                cmds.append((PipeInstr.ReceiveActivations, {"buffer_idx": left_buf}))
+
+            cmds.append((PipeInstr.Forward, {"buffer_idx": left_buf}))
+
+            if not self.is_last_stage:
+                cmds.append((PipeInstr.SendActivations, {"buffer_idx": right_buf}))
+            yield cmds
+
+    def num_buffers(self):
+        return 2
 
 
 class GPipeSchedule:
@@ -81,38 +155,46 @@ class PipeDreamSchedule:
 
 
 class Dataset:
-    x_train = None
-    y_train = None
+    input_X = None
+    target_y = None
 
-    def __init__(self, save_dir, batch_size, mubatch_size):
+    def __init__(self, save_dir, batch_size, mubatch_size, validation=False):
         assert batch_size % mubatch_size == 0, "μBatchsize must divide batchsize!"
+        assert save_dir.is_dir(), "Download the dataset first!"
         self.save_dir = save_dir
         self.batch_size = batch_size
         self.mubatch_size = mubatch_size
+        self._val = validation
 
-    def load(self, rank, size):
+    def load(self, DP_rank, DP_size):
         # each process loads the whole dataset
         # this is inefficient for large datasets, but fine for tiny MNIST
-        x_train = pd.read_parquet(self.save_dir / "x_train.parquet").to_numpy()
-        y_train = np.load(self.save_dir / "y_train.npy")
+        suffix = "val" if self._val else "train"
+        input_X = pd.read_parquet(self.save_dir / f"x_{suffix}.parquet").to_numpy()
+        target_y = np.load(self.save_dir / f"y_{suffix}.npy")
 
-        # each process selects its subset of the datasets by a `rank`-offset and `size`-strides
+        # each DP process selects its subset of the datasets by a `rank`-offset and `size`-strides
         # the copy() is super important, else the array is not continuous in memory
         # which results in horrible matmul performance
-        self.x_train = x_train[rank : len(x_train) : size].copy()
-        self.y_train = y_train[rank : len(y_train) : size].copy()
+        self.input_X = input_X[DP_rank : len(input_X) : DP_size].copy()
+        self.target_y = target_y[DP_rank : len(target_y) : DP_size].copy()
 
     def __len__(self):
-        return len(self.x_train)
+        return len(self.input_X)
 
-    def load_micro_batch(self, batch_id, micro_batch_id):
+    def load_micro_batch_input(self, batch_id, mubatch_id):
         assert batch_id < self.get_num_batches()
-        assert micro_batch_id < self.get_num_mubatches()
+        assert mubatch_id < self.get_num_mubatches()
+        start_idx = batch_id * self.batch_size + mubatch_id * self.mubatch_size
+        end_idx = min(len(self.input_X), start_idx + self.mubatch_size)
+        return self.input_X[start_idx:end_idx]
 
-        start_idx = batch_id * self.batch_size + micro_batch_id * self.mubatch_size
-        end_idx = min(len(self.x_train), start_idx + self.mubatch_size)
-
-        return self.x_train[start_idx:end_idx], self.y_train[start_idx:end_idx]
+    def load_micro_batch_target(self, batch_id, mubatch_id):
+        assert batch_id < self.get_num_batches()
+        assert mubatch_id < self.get_num_mubatches()
+        start_idx = batch_id * self.batch_size + mubatch_id * self.mubatch_size
+        end_idx = min(len(self.input_X), start_idx + self.mubatch_size)
+        return self.target_y[start_idx:end_idx]
 
     def get_num_batches(self):
         return len(self) // self.batch_size
@@ -152,7 +234,14 @@ class Worker:
     but also the buffers for sending and receiving activations & gradients
     """
 
-    def __init__(self, dp_comm, pp_comm, model: Sequential, dataset, optimizer):
+    def __init__(
+        self,
+        dp_comm: MPI.Comm,
+        pp_comm: MPI.Comm,
+        model: Sequential,
+        dataset: Dataset,
+        optimizer,
+    ):
         self.stage_id = pp_comm.Get_rank()
         self.pipeline_depth = pp_comm.Get_size()
         self.dp_comm = dp_comm
@@ -160,47 +249,78 @@ class Worker:
         self.model = model
         self.dataset = dataset
         self.optimizer = optimizer
+        self.buffers = []
 
-        # allocate buffers for current microbatch
-        self.inputs_fw = None
-        self.outputs_fw = None
-        self.inputs_bw = None
-        self.outputs_bw = None
-
-    def execute(self, schedule, batch_id):
+    def execute(self, sched, batch_id):
         """
         Use the configured schedule to execute a full batch
 
         Basically it'll just call the right function, given whatever the scheduler
         tells it to do
         """
-        for commands in schedule.steps():
+
+        # bufferization
+        self.buffers = [None for _ in range(sched.num_buffers())]
+        self.buffers[0] = np.empty((self.dataset.mubatch_size, self.model.in_dim))
+
+        for commands in sched.steps():
             for command, kwargs in commands:
                 match command:
-                    case PipelineInstruction.LoadMicroBatch:
-                        self.load_micro_batch(batch_id, **kwargs)
-                    case PipelineInstruction.Forward:
-                        self.forward()
-                    case PipelineInstruction.BackwardGradAllReduce:
-                        self.backward_and_reduce()
-                    case PipelineInstruction.BackwardGradAccumulate:
-                        self.backward_accumulate()
-                    case PipelineInstruction.OptimizerStep:
+                    case PipeInstr.LoadMicroBatchInput:
+                        self.load_micro_batch_input(batch_id, **kwargs)
+                    case PipeInstr.LoadMicroBatchTarget:
+                        self.load_micro_batch_target(batch_id, **kwargs)
+                    case PipeInstr.Forward:
+                        self.forward(**kwargs)
+                    case PipeInstr.BackwardGradAllReduce:
+                        self.backward_and_reduce(**kwargs)
+                    case PipeInstr.BackwardGradAccumulate:
+                        self.backward_accumulate(**kwargs)
+                    case PipeInstr.OptimizerStep:
                         self.optimizer_step()
-                    case PipelineInstruction.ZeroGrad:
+                    case PipeInstr.ZeroGrad:
                         self.zero_grad()
+                    case PipeInstr.ReceiveActivations:
+                        self.recv_buffer(from_idx=self.get_predecessor(sched), **kwargs)
+                    case PipeInstr.SendActivations:
+                        self.send_buffer(to_idx=self.get_successor(sched), **kwargs)
+                    case PipeInstr.ReceiveOutputGrad:
+                        self.recv_buffer(from_idx=self.get_successor(sched), **kwargs)
+                    case PipeInstr.SendInputGrad:
+                        self.send_buffer(to_idx=self.get_predecessor(sched), **kwargs)
                     case _:
                         raise NotImplementedError(command)
 
-    def load_micro_batch(self, batch_id, micro_batch_id):
-        self.inputs_fw, self.inputs_bw = self.dataset.load_micro_batch(
-            batch_id, micro_batch_id
+    def load_micro_batch_input(self, batch_id, mubatch_id, buffer_idx):
+        self.buffers[buffer_idx] = self.dataset.load_micro_batch_input(
+            batch_id, mubatch_id
         )
 
-    def forward(self):
-        self.outputs_fw = self.model.forward(self.inputs_fw)
+    def get_predecessor(self, schedule):
+        pred = self.stage_id - 1
+        assert schedule.is_valid_stage_id(pred)
+        return pred
 
-    def backward_and_reduce(self):
+    def get_successor(self, schedule):
+        succ = self.stage_id + 1
+        assert schedule.is_valid_stage_id(succ)
+        return succ
+
+    def recv_buffer(self, from_idx, buffer_idx):
+        self.pp_comm.Recv(self.buffers[buffer_idx], from_idx)
+
+    def send_buffer(self, to_idx, buffer_idx):
+        self.pp_comm.Send(self.buffers[buffer_idx], to_idx)
+
+    def load_micro_batch_target(self, batch_id, mubatch_id, buffer_idx):
+        self.buffers[buffer_idx] = self.dataset.load_micro_batch_target(
+            batch_id, mubatch_id
+        )
+
+    def forward(self, buffer_idx):
+        self.buffers[buffer_idx + 1] = self.model.forward(self.buffers[buffer_idx])
+
+    def backward_and_reduce(self, buffer_idx):
         # hooks for AllReducing-ing the gradient across all dp_workers
         self.model.register_grad_hook(
             lambda param: backprop_allreduce_gradient(self.dp_comm, param)
@@ -208,13 +328,13 @@ class Worker:
         self.model.register_post_grad_hook(backprop_block_for_comms)
 
         # regular backwards pass will trigger the AR hooks
-        self.outputs_bw = self.model.backward(self.inputs_bw)
+        self.backward_accumulate(buffer_idx)
 
         self.model.reset_grad_hooks()
         self.model.reset_post_grad_hooks()
 
-    def backward_accumulate(self):
-        self.outputs_bw = self.model.backward(self.inputs_bw)
+    def backward_accumulate(self, buffer_idx):
+        self.buffers[buffer_idx - 1] = self.model.backward(self.buffers[buffer_idx])
 
     def optimizer_step(self):
         self.optimizer.step()
