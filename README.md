@@ -7,7 +7,7 @@ Implemented using plain Numpy & mpi4py.
 
 
 Currently implements:
-- Sequential models / MLPs, training using SGD.
+- Sequential models / deep MLPs, training using SGD.
 - Data parallel training, using interleaved communication & computation, similar to PyTorch's [DistributedDataParallel](https://arxiv.org/abs/2006.15704).
 - Pipeline parallel training:
   - Naive schedule w/o interleaved stages.
