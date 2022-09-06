@@ -1,4 +1,5 @@
 # Shallowspeed
+![stability-wip](https://img.shields.io/badge/stability-work_in_progress-lightgrey.svg)
 
 A tiny POC implementation of distributed training for sequential deep learning models.
 Implemented using plain Numpy & mpi4py.
