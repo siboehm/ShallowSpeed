@@ -6,7 +6,7 @@ from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
 
 
-def download_dataset(save_dir):
+def download_MNIST(save_dir):
     x, y = fetch_openml("mnist_784", version=1, data_home="data_cache", return_X_y=True)
 
     x /= 255.0
@@ -25,5 +25,5 @@ def download_dataset(save_dir):
 
 if __name__ == "__main__":
     save_dir = Path("../data/mnist_784/")
-    print(f"Downloading dataset at {save_dir.resolve()}")
-    download_dataset(save_dir)
+    print(f"Downloading MNIST dataset at {save_dir.resolve()}")
+    download_MNIST(save_dir)

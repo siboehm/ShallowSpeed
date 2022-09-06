@@ -3,6 +3,16 @@ import pandas as pd
 
 
 class Dataset:
+    """
+    TODO this is a pretty awkward implementation.
+    How to improve:
+    - Turn microbatch loading into an iterator
+        - We only ever need to access μBatches sequentially, even during PipeDream
+    - Figure out a clean interface for not having every process load the dataset
+        - Maybe by injecting a load_dataset() function into __init__, which returns the numpy slices?
+    - Write some tests to ensure equal μBatches are loaded during Sequential & distributed training
+    """
+
     input_X = None
     target_y = None
 

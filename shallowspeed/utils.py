@@ -2,7 +2,7 @@ from hashlib import sha1
 
 from mpi4py import MPI
 
-from minMLP.base import Parameter
+from shallowspeed.layers import Parameter
 
 
 def rprint(*args, **kwargs):

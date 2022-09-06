@@ -1,4 +1,4 @@
-from minMLP.base import Parameter
+from shallowspeed.layers import Parameter
 
 
 class SGD:

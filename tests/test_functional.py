@@ -1,6 +1,6 @@
 import numpy as np
 
-from minMLP.functional import (
+from shallowspeed.functional import (
     linear,
     linear_grad,
     mse_loss,

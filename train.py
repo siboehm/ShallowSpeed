@@ -5,17 +5,17 @@ from pathlib import Path
 import numpy as np
 from mpi4py import MPI
 
-from minMLP.dataset import Dataset
-from minMLP.layers import MLP
-from minMLP.optimizer import SGD
-from minMLP.pipe import (
+from shallowspeed.dataset import Dataset
+from shallowspeed.layers import MLP
+from shallowspeed.optimizer import SGD
+from shallowspeed.pipe import (
     GPipeSchedule,
     InferenceSchedule,
     NaiveParallelSchedule,
     PipeDreamSchedule,
     Worker,
 )
-from minMLP.utils import assert_sync, get_model_hash
+from shallowspeed.utils import assert_sync, get_model_hash
 
 
 def compute_accuracy(model, worker, dataset):

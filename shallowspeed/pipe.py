@@ -5,8 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 from mpi4py import MPI
 
-from minMLP.dataset import Dataset
-from minMLP.layers import MLP
+from shallowspeed.dataset import Dataset
+from shallowspeed.layers import MLP
 
 
 class PipeInstr:
@@ -15,11 +15,20 @@ class PipeInstr:
 
 @dataclass
 class ZeroGrad(PipeInstr):
+    """
+    Set param.grad to zero for all trainable parameters in model
+    This starts a new phase of gradient accumulation
+    """
+
     pass
 
 
 @dataclass
 class OptimizerStep(PipeInstr):
+    """
+    Update the trainable parameters of the model using parameter.grad
+    """
+
     pass
 
 
@@ -30,21 +39,41 @@ class BufferPipeInstr(PipeInstr):
 
 @dataclass
 class RecvActivations(BufferPipeInstr):
+    """
+    Recv activations from the previous pipeline stage and store them into
+    a buffer. Currently, this is a blocking Op.
+    """
+
     pass
 
 
 @dataclass
 class SendActivations(BufferPipeInstr):
+    """
+    Send the results of the local FWD-pass to the next pipeline stage
+    Currently, this is a blocking Op.
+    """
+
     pass
 
 
 @dataclass
 class RecvOutputGrad(BufferPipeInstr):
+    """
+    Recv gradients wrt the outputs of the local FWD-pass from the next pipeline stage
+    and store them into a buffer. Currently, this is a blocking Op.
+    """
+
     pass
 
 
 @dataclass
 class SendInputGrad(BufferPipeInstr):
+    """
+    Send gradients wrt the inputs of the local FWD-pass to the previous pipeline stage
+    and store them into a buffer. Currently, this is a blocking Op.
+    """
+
     pass
 
 
@@ -56,16 +85,33 @@ class MuBatchPipeInstr(PipeInstr):
 
 @dataclass
 class Forward(MuBatchPipeInstr):
+    """
+    Perform a local FWD-pass on the given `mubatch_id`-μBatch and store the
+    result in the given buffer.
+    """
+
     pass
 
 
 @dataclass
 class BackwardGradAcc(MuBatchPipeInstr):
+    """
+    Perform a local BWD-pass on the given `mubatch_id`-μBatch and store the
+    result in the given buffer. Accumulate the gradients for each parameter
+    in param.grad (ie param.grad += <grad of μBatch wrt param>).
+    """
+
     pass
 
 
 @dataclass
 class BackwardGradAllReduce(MuBatchPipeInstr):
+    """
+    Like `BackwardGradAcc`, but start non-blocking AllReduce for each param.grad
+    once it has been computed. This interleaves communication & computation while
+    performing the local BWDs pass.
+    """
+
     pass
 
 
@@ -76,11 +122,19 @@ class LoadInstruction(MuBatchPipeInstr):
 
 @dataclass
 class LoadMuBatchInput(LoadInstruction):
+    """
+    Load the inputs X of a new μBatch into the given buffer.
+    """
+
     pass
 
 
 @dataclass
 class LoadMuBatchTarget(LoadInstruction):
+    """
+    Load the targets y of a new μBatch into the given buffer.
+    """
+
     pass
 
 
@@ -110,12 +164,18 @@ class Schedule(ABC):
         pass
 
     @property
+    def is_first_stage(self):
+        return self.stage_id == 0
+
+    @property
     def is_last_stage(self):
         return self.stage_id == self.num_stages - 1
 
-    @property
-    def is_first_stage(self):
-        return self.stage_id == 0
+    def is_first_mubatch(self, mubatch_id):
+        return mubatch_id == 0
+
+    def is_last_mubatch(self, mubatch_id):
+        return mubatch_id == self.num_micro_batches - 1
 
     def is_valid_stage_id(self, stage_id):
         return 0 <= stage_id < self.num_stages
@@ -146,7 +206,7 @@ class NaiveParallelSchedule(Schedule):
         else:
             cmds.append(SendActivations(buffer_id=0))
             cmds.append(RecvOutputGrad(buffer_id=0))
-        if mubatch_id == self.num_micro_batches - 1:
+        if self.is_last_mubatch(mubatch_id):
             cmds.append(BackwardGradAllReduce(buffer_id=0, mubatch_id=mubatch_id))
         else:
             cmds.append(BackwardGradAcc(buffer_id=0, mubatch_id=mubatch_id))
@@ -183,8 +243,8 @@ class GPipeSchedule(Schedule):
             cmds.append(LoadMuBatchTarget(mubatch_id=mubatch_id, buffer_id=0))
         else:
             cmds.append(RecvOutputGrad(buffer_id=0))
-        if mubatch_id == 0:
-            # interleaved backprop & AllReduce during last μBatch
+        if self.is_first_mubatch(mubatch_id):
+            # interleaved backprop & AllReduce during last μBatch of BWD
             cmds.append(BackwardGradAllReduce(buffer_id=0, mubatch_id=mubatch_id))
         else:
             cmds.append(BackwardGradAcc(buffer_id=0, mubatch_id=mubatch_id))
@@ -201,14 +261,14 @@ class GPipeSchedule(Schedule):
         cmds.append(Forward(buffer_id=0, mubatch_id=mubatch_id))
         # the last stage just discards the output of its `forward()` pass since
         # it's not necessary for running BWD. The last stage just needs the target values
-        # (loaded from disk) and the activations (cached inside the `Module`'s) for BWD.
+        # (loaded from disk) and the activations (cached inside the `Module`s) for BWD.
         if not self.is_last_stage:
             cmds.append(SendActivations(buffer_id=0))
         return cmds
 
     @property
     def num_buffers(self):
-        # could keep more buffers around and make the sending & receiving async
+        # TODO should keep more buffers around and make the sending & receiving async
         return 2
 
 
@@ -236,7 +296,7 @@ class InferenceSchedule(Schedule):
 
 class PipeDreamSchedule:
     def __init__(self):
-        pass
+        raise NotImplementedError()
 
 
 def backprop_allreduce_gradient(comm, param):
@@ -381,8 +441,8 @@ class Worker:
 
         # The buffers hold activations during FWD passes and gradients during BWD
         # activation.shape == grad.shape, hence we can reuse the same buffers for FWD & BWD
-        # TODO make buffers persistent for the whole training run by setting μBatch-size during
-        #   validation loss calculation
+        # TODO make buffers persistent for the whole training run by setting μBatch-size
+        #    and schedule during __init__. Implement a worker.teardown() for free'ing the buffers.
         assert sched.num_buffers % 2 == 0
         self.input_buffers = [
             np.empty((self.dataset.mubatch_size, self.model.in_dim), dtype=np.float32)
@@ -396,6 +456,7 @@ class Worker:
         for commands in sched.steps():
             for command in commands:
                 if isinstance(command, LoadInstruction):
+                    # data loaders need the current batch_id, every other instruction doesn't.
                     self._INSTRUCTION_MAP[type(command)](
                         self, batch_id, **dataclasses.asdict(command)
                     )

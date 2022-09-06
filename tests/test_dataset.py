@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from minMLP.dataset import Dataset
+from shallowspeed.dataset import Dataset
 
 
 def test_dataset():

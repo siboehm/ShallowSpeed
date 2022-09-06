@@ -1,7 +1,7 @@
 import numpy as np
 
-from minMLP.functional import mse_loss_grad
-from minMLP.layers import MLP, Linear, ReLU, Sequential, Softmax
+from shallowspeed.functional import mse_loss_grad
+from shallowspeed.layers import MLP, Linear, ReLU, Sequential, Softmax
 
 
 def test_MLP_basic():
