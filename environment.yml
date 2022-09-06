@@ -1,4 +1,4 @@
-name: distributed_NNs
+name: shallowspeed
 channels:
   - conda-forge
 dependencies:
