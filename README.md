@@ -21,6 +21,7 @@ conda env create
 pip install -e .
 # M1 Macs: conda install "libblas=*=*accelerate"
 python download_dataset.py
+pytest
 ```
 
 ## Usage
