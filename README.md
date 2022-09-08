@@ -36,3 +36,5 @@ mpirun -n 4 python train.py --pp 4 --schedule naive
 # Data & pipeline parallel distributed training
 mpirun -n 8 python train.py --dp 2 --pp 4 --schedule gpipe
 ```
+
+![](.github/assets/PP_pebble_graph.gif)
