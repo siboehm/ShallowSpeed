@@ -18,6 +18,7 @@ from torchvision import datasets, transforms
 torch.set_num_threads(1)
 torch.manual_seed(0)
 
+
 # Define an MLP classifier
 class MLP(nn.Module):
     def __init__(self, input_size: int, hidden_size: int, output_size: int):
